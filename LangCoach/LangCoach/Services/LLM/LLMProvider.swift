@@ -26,6 +26,7 @@ enum LLMProviderKind: String, CaseIterable, Identifiable, Codable {
     /// Keychain account name for this provider's key.
     var keychainAccount: String { "apikey.\(rawValue)" }
 
+    /// The default high-quality model, used for conversation where output quality matters.
     var defaultModel: String {
         switch self {
         case .gemini: return "gemini-2.5-flash"
@@ -34,11 +35,21 @@ enum LLMProviderKind: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// The default cheap/fast model, used for grading, sentence generation, vocab
+    /// extraction, and note distillation where cost matters more than nuance.
+    var defaultQuickModel: String {
+        switch self {
+        case .gemini: return "gemini-2.5-flash-lite"
+        case .claude: return "claude-haiku-4-5-20251001"
+        case .openai: return "gpt-4o-mini"
+        }
+    }
+
     var suggestedModels: [String] {
         switch self {
-        case .gemini: return ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
-        case .claude: return ["claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5-20251001"]
-        case .openai: return ["gpt-4o", "gpt-4o-mini", "gpt-4.1"]
+        case .gemini: return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
+        case .claude: return ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+        case .openai: return ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"]
         }
     }
 

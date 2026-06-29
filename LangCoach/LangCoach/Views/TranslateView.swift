@@ -185,7 +185,13 @@ struct TranslateView: View {
         feedback = nil
         answer = ""
         phase = .loadingPrompt
-        let context = useNotes ? (sourceDoc?.text ?? documents.first?.text) : nil
+        // Prefer the compact distilled memory; fall back to raw text if not yet generated.
+        let context: String?
+        if useNotes, let doc = sourceDoc ?? documents.first {
+            context = doc.hasMemory ? doc.studyMemory : doc.text
+        } else {
+            context = nil
+        }
         Task {
             do {
                 let sentence = try await coach.generateTranslationPrompt(

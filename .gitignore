@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+
+# Xcode — user-specific state (keep the shared project, drop per-user files)
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Xcode build output
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# CocoaPods / Carthage (if ever added)
+Pods/
+Carthage/Build/
+
+# Misc
+*.log

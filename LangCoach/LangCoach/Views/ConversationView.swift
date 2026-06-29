@@ -1,10 +1,14 @@
 import SwiftUI
+import SwiftData
 
 struct ConversationView: View {
     @Environment(Coach.self) private var coach
+    @Query(sort: \StudyDocument.importedAt, order: .reverse) private var documents: [StudyDocument]
 
     @State private var level: Level = .beginner
     @State private var topic: String = ""
+    @State private var useNotes = false
+    @State private var sourceDoc: StudyDocument?
     @State private var messages: [ChatTurn] = []
     /// Clean history sent to the model (Korean text only).
     @State private var apiHistory: [ChatMessage] = []
@@ -21,7 +25,7 @@ struct ConversationView: View {
             switch self {
             case .beginner: return "Use very simple words and short sentences. Mostly present tense. Add furigana-style romanization sparingly."
             case .intermediate: return "Use everyday vocabulary and a natural mix of tenses and connectors."
-            case .advanced: return "Speak naturally as you would with a native, using idioms and varied grammar."
+            case .advanced: return "Text naturally as you would with a native, using idioms and varied grammar."
             }
         }
     }
@@ -67,8 +71,8 @@ struct ConversationView: View {
             Image(systemName: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 44))
                 .foregroundStyle(Theme.brandGradient)
-            Text("Korean conversation practice").font(.title2.bold())
-            Text("Chat with your AI coach in Korean. It replies naturally and gently corrects your mistakes as you go.")
+            Text("Korean texting practice").font(.title2.bold())
+            Text("Text back and forth with your AI coach in Korean. It replies like a friend over messages and gently corrects your mistakes as you go.")
                 .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 420)
 
@@ -80,6 +84,16 @@ struct ConversationView: View {
 
                 TextField("Topic or scenario (optional) — e.g. ordering coffee", text: $topic)
                     .textFieldStyle(.roundedBorder)
+
+                if !documents.isEmpty {
+                    Toggle("Use vocab from my notes", isOn: $useNotes)
+                    if useNotes {
+                        Picker("Note", selection: $sourceDoc) {
+                            Text("Most recent note").tag(Optional<StudyDocument>.none)
+                            ForEach(documents) { Text($0.title).tag(Optional($0)) }
+                        }
+                    }
+                }
             }
             .frame(maxWidth: 420)
 
@@ -162,16 +176,17 @@ struct ConversationView: View {
 
     private func systemPrompt() -> String {
         var p = """
-        You are 코치, a warm, patient Korean conversation partner for a language learner. \
-        Level: \(level.rawValue). \(level.guidance)
-        Keep your spoken reply concise (1-3 sentences) and always continue the conversation \
-        by asking a question or inviting a response.
+        You are 코치, a warm, patient Korean texting partner for a language learner. \
+        You are chatting over text messages, so write like a friend texting: short, \
+        casual, natural. Level: \(level.rawValue). \(level.guidance)
+        Keep each text reply concise (1-3 short sentences) and always keep the \
+        conversation going by asking a question or inviting a response.
 
         Whenever the student writes something, check their Korean for mistakes \
         (grammar, particles, word choice, naturalness).
 
         Respond ONLY with JSON (no markdown fences) with these keys:
-        "reply": your natural Korean reply to continue the conversation,
+        "reply": your natural Korean text reply to continue the conversation,
         "translation": an English translation of your reply,
         "hasErrors": true/false — whether the student's last message had mistakes,
         "correction": if hasErrors, the corrected/natural Korean version of what they wrote, else "",
@@ -180,7 +195,29 @@ struct ConversationView: View {
         if !topic.trimmingCharacters(in: .whitespaces).isEmpty {
             p += "\n\nToday's topic/scenario: \(topic)."
         }
+        if let context = notesContext() {
+            p += """
+
+
+            The student is studying the lesson below. Naturally weave this vocabulary \
+            and these grammar points into the conversation so they get to practice them, \
+            without forcing it. Do not mention that you were given notes.
+
+            LESSON NOTES:
+            \(context)
+            """
+        }
         return p
+    }
+
+    /// The distilled study memory to steer the chat, if the user opted in.
+    private func notesContext() -> String? {
+        guard useNotes, let doc = sourceDoc ?? documents.first else { return nil }
+        let memory = doc.studyMemory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !memory.isEmpty { return memory }
+        // Fall back to a trimmed slice of raw text if no memory has been distilled yet.
+        let raw = doc.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : String(raw.prefix(2000))
     }
 
     // MARK: - Actions

@@ -8,8 +8,14 @@ final class Coach {
     var providerKind: LLMProviderKind {
         didSet { UserDefaults.standard.set(providerKind.rawValue, forKey: Keys.provider) }
     }
+    /// High-quality model used for conversation.
     var model: String {
         didSet { UserDefaults.standard.set(model, forKey: Keys.model) }
+    }
+    /// Cheap/fast model used for grading, sentence generation, vocab extraction,
+    /// and note distillation.
+    var quickModel: String {
+        didSet { UserDefaults.standard.set(quickModel, forKey: Keys.quickModel) }
     }
     /// Bumped whenever the key changes so SwiftUI views recompute `hasKey`.
     private(set) var keyRevision: Int = 0
@@ -17,6 +23,7 @@ final class Coach {
     private enum Keys {
         static let provider = "settings.provider"
         static let model = "settings.model"
+        static let quickModel = "settings.quickModel"
     }
 
     init() {
@@ -24,6 +31,7 @@ final class Coach {
         let kind = LLMProviderKind(rawValue: defaults.string(forKey: Keys.provider) ?? "") ?? .gemini
         self.providerKind = kind
         self.model = defaults.string(forKey: Keys.model) ?? kind.defaultModel
+        self.quickModel = defaults.string(forKey: Keys.quickModel) ?? kind.defaultQuickModel
     }
 
     // MARK: - API key management
@@ -46,12 +54,13 @@ final class Coach {
     func switchProvider(to kind: LLMProviderKind) {
         providerKind = kind
         model = kind.defaultModel
+        quickModel = kind.defaultQuickModel
         keyRevision += 1
     }
 
     // MARK: - Client resolution
 
-    private func makeClient() throws -> LLMClient {
+    private func makeClient(model: String) throws -> LLMClient {
         let key = Keychain.get(account: providerKind.keychainAccount) ?? ""
         guard !key.isEmpty else { throw LLMError.missingKey(providerKind) }
         switch providerKind {
@@ -61,15 +70,22 @@ final class Coach {
         }
     }
 
-    /// Low-level chat entry point.
+    /// Low-level chat entry point. Uses the high-quality conversation model.
     func reply(system: String, messages: [ChatMessage]) async throws -> String {
-        let client = try makeClient()
+        let client = try makeClient(model: model)
         return try await client.send(system: system, messages: messages)
     }
 
-    /// Single-shot prompt convenience.
+    /// Single-shot prompt on the high-quality model.
     func complete(system: String, user: String) async throws -> String {
         try await reply(system: system, messages: [ChatMessage(role: .user, content: user)])
+    }
+
+    /// Single-shot prompt on the cheap/fast model, for grading and other
+    /// utility tasks where cost matters more than nuance.
+    func quickComplete(system: String, user: String) async throws -> String {
+        let client = try makeClient(model: quickModel)
+        return try await client.send(system: system, messages: [ChatMessage(role: .user, content: user)])
     }
 
     // MARK: - High-level coaching operations
@@ -88,8 +104,35 @@ final class Coach {
         "example" (a short Korean example sentence if present in the notes, else empty).
         Return at most 40 items. If there is no Korean vocabulary, return [].
         """
-        let raw = try await complete(system: system, user: String(notes.prefix(12_000)))
+        let raw = try await quickComplete(system: system, user: String(notes.prefix(12_000)))
         return try Self.decodeVocab(raw)
+    }
+
+    /// Distills raw lesson notes into a compact "study memory" — the key vocab,
+    /// grammar points, and themes needed to drive practice — so the full note
+    /// text never has to be sent to the model again. Uses the cheap/fast model.
+    func distillNotes(_ notes: String) async throws -> String {
+        let system = """
+        You are a Korean teaching assistant. Read the class notes and produce a \
+        compact STUDY MEMORY that captures everything needed to practice this \
+        lesson, with no fluff. Use exactly this plain-text format:
+
+        VOCAB:
+        - 한국어 — English meaning (reading if helpful)
+        (the most important items, up to ~30)
+
+        GRAMMAR:
+        - pattern — one-line explanation
+        (key grammar/particles introduced in the lesson)
+
+        THEMES: a short comma-separated list of topics or scenarios
+
+        Keep Korean in Korean. Stay under ~250 words. Output ONLY this text — \
+        no markdown fences, no preamble, no closing remarks. If the notes contain \
+        no Korean content, output exactly: (no Korean content)
+        """
+        return try await quickComplete(system: system, user: String(notes.prefix(12_000)))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Grades a translation attempt. `direction` describes which way to translate.
@@ -113,7 +156,7 @@ final class Coach {
         SOURCE (\(direction.sourceLabel)): \(prompt)
         STUDENT ANSWER (\(direction.targetLabel)): \(answer)
         """
-        let raw = try await complete(system: system, user: user)
+        let raw = try await quickComplete(system: system, user: user)
         return try Self.decodeFeedback(raw)
     }
 
@@ -139,7 +182,7 @@ final class Coach {
         } else {
             user = "Use common everyday vocabulary appropriate to the difficulty."
         }
-        return try await complete(system: system, user: user)
+        return try await quickComplete(system: system, user: user)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

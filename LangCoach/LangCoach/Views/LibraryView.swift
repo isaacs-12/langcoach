@@ -4,12 +4,15 @@ import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @Environment(\.modelContext) private var context
+    @Environment(Coach.self) private var coach
     @Query(sort: \StudyDocument.importedAt, order: .reverse) private var documents: [StudyDocument]
 
     @State private var selection: StudyDocument?
     @State private var importing = false
     @State private var importError: String?
     @State private var extracting: StudyDocument?
+    /// IDs of documents currently having their study memory distilled.
+    @State private var distilling: Set<PersistentIdentifier> = []
 
     var body: some View {
         Group {
@@ -110,11 +113,14 @@ struct LibraryView: View {
                 .padding()
                 Divider()
                 ScrollView {
-                    Text(doc.text)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
+                    VStack(alignment: .leading, spacing: 0) {
+                        memorySection(for: doc)
+                        Text(doc.text)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                    }
                 }
             }
         } else {
@@ -126,6 +132,64 @@ struct LibraryView: View {
         }
     }
 
+    // MARK: - Study memory
+
+    @ViewBuilder
+    private func memorySection(for doc: StudyDocument) -> some View {
+        let isDistilling = distilling.contains(doc.persistentModelID)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "brain.head.profile")
+                    .foregroundStyle(Theme.accent)
+                Text("Study memory")
+                    .font(.headline)
+                Spacer()
+                if isDistilling {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(doc.hasMemory ? "Regenerate" : "Generate") {
+                        distill(doc)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!coach.hasKey)
+                }
+            }
+            if doc.hasMemory {
+                Text(doc.studyMemory)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(coach.hasKey
+                     ? "A compact summary used for translation and conversation practice. Generated automatically on import."
+                     : "Set up an API key to distill this note into practice context.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(Theme.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        .padding([.horizontal, .top])
+    }
+
+    private func distill(_ doc: StudyDocument) {
+        let id = doc.persistentModelID
+        guard coach.hasKey, !distilling.contains(id) else { return }
+        distilling.insert(id)
+        let text = doc.text
+        Task {
+            let memory = try? await coach.distillNotes(text)
+            await MainActor.run {
+                if let memory, !memory.isEmpty {
+                    doc.studyMemory = memory
+                    try? context.save()
+                }
+                distilling.remove(id)
+            }
+        }
+    }
+
     // MARK: - Actions
 
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -134,6 +198,7 @@ struct LibraryView: View {
             importError = error.localizedDescription
         case .success(let urls):
             var failures: [String] = []
+            var imported: [StudyDocument] = []
             for url in urls {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -142,11 +207,16 @@ struct LibraryView: View {
                     let doc = StudyDocument(title: title, sourceFilename: url.lastPathComponent, text: text)
                     context.insert(doc)
                     selection = doc
+                    imported.append(doc)
                 } catch {
                     failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
                 }
             }
             try? context.save()
+            // Distill each new note into a compact study memory in the background.
+            if coach.hasKey {
+                for doc in imported { distill(doc) }
+            }
             if !failures.isEmpty {
                 importError = failures.joined(separator: "\n")
             }

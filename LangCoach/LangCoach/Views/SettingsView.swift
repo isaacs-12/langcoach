@@ -37,7 +37,7 @@ private struct ProviderSettingsView: View {
                     }
                 }
 
-                Picker("Model", selection: $coach.model) {
+                Picker("Chat model", selection: $coach.model) {
                     ForEach(coach.providerKind.suggestedModels, id: \.self) { m in
                         Text(m).tag(m)
                     }
@@ -45,10 +45,19 @@ private struct ProviderSettingsView: View {
                         Text(coach.model).tag(coach.model)
                     }
                 }
+
+                Picker("Quick-tasks model", selection: $coach.quickModel) {
+                    ForEach(coach.providerKind.suggestedModels, id: \.self) { m in
+                        Text(m).tag(m)
+                    }
+                    if !coach.providerKind.suggestedModels.contains(coach.quickModel) {
+                        Text(coach.quickModel).tag(coach.quickModel)
+                    }
+                }
             } header: {
                 Text("Coaching engine")
             } footer: {
-                Text("Lang Coach is fully local except for these AI requests. Your notes and flashcards never leave your Mac unless sent to the model you choose.")
+                Text("The chat model powers conversation practice. The quick-tasks model handles grading, sentence generation, vocab extraction, and note distillation — pick a cheaper model here to save on cost.\n\nLang Coach is fully local except for these AI requests. Your notes and flashcards never leave your Mac unless sent to the model you choose.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

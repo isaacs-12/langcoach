@@ -22,7 +22,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .library: return "Import & manage notes"
         case .flashcards: return "Study vocab with SRS"
-        case .conversation: return "Practice speaking"
+        case .conversation: return "Practice texting"
         case .translate: return "Test your translation"
         }
     }
