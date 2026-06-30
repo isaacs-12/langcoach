@@ -14,13 +14,27 @@ final class StudyDocument {
     /// import time. Reused as practice context so the full note text never has to
     /// be sent to the model again. Empty until distillation succeeds.
     var studyMemory: String = ""
+    /// RTF data preserving the source formatting (bold, italics, headings, …).
+    /// Nil when the source carried no usable formatting (plain text / PDF), in
+    /// which case the viewer falls back to rendering `text`.
+    var formattedData: Data? = nil
+    /// Absolute path of the source file when this note came from a mounted notes
+    /// folder. Empty for notes added one-off via the import panel. Used to keep
+    /// folder contents in sync without creating duplicates.
+    var sourcePath: String = ""
+    /// File content-modification date at the last import, used to detect when a
+    /// mounted file has changed and needs re-importing.
+    var sourceModified: Date? = nil
 
-    init(title: String, sourceFilename: String, text: String, importedAt: Date = .now, studyMemory: String = "") {
+    init(title: String, sourceFilename: String, text: String, importedAt: Date = .now, studyMemory: String = "", formattedData: Data? = nil, sourcePath: String = "", sourceModified: Date? = nil) {
         self.title = title
         self.sourceFilename = sourceFilename
         self.text = text
         self.importedAt = importedAt
         self.studyMemory = studyMemory
+        self.formattedData = formattedData
+        self.sourcePath = sourcePath
+        self.sourceModified = sourceModified
     }
 
     /// Whether a distilled study memory is available for practice context.

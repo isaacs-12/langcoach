@@ -68,6 +68,8 @@ struct CalloutView: View {
     var message: String
     var actionTitle: String? = nil
     var action: (() -> Void)? = nil
+    var secondaryActionTitle: String? = nil
+    var secondaryAction: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 14) {
@@ -86,6 +88,10 @@ struct CalloutView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .padding(.top, 4)
+            }
+            if let secondaryActionTitle, let secondaryAction {
+                Button(secondaryActionTitle, action: secondaryAction)
+                    .buttonStyle(.borderless)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

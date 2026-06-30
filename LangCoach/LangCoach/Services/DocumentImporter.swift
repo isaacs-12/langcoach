@@ -3,13 +3,14 @@ import AppKit
 import PDFKit
 import UniformTypeIdentifiers
 
-/// Extracts plain text from files the user imports. Google Docs can be exported
-/// to any of these formats (File ▸ Download), so this covers the user's notes.
+/// Extracts text — and, where the source carries it, formatting — from files the
+/// user imports. Google Docs can be exported to any of these formats (File ▸
+/// Download), so this covers the user's notes.
 enum DocumentImporter {
 
     /// File types the import panel should accept.
     static var allowedContentTypes: [UTType] {
-        var types: [UTType] = [.plainText, .pdf, .rtf]
+        var types: [UTType] = [.plainText, .pdf, .rtf, .html]
         // .docx / .doc
         if let docx = UTType(filenameExtension: "docx") { types.append(docx) }
         if let doc = UTType(filenameExtension: "doc") { types.append(doc) }
@@ -18,6 +19,14 @@ enum DocumentImporter {
         if let markdown = UTType("net.daringfireball.markdown") { types.append(markdown) }
         return types
     }
+
+    /// File extensions the folder scanner should pick up. Kept in sync with the
+    /// `extract(from:)` switch below.
+    static let allowedExtensions: Set<String> = [
+        "txt", "text", "md", "markdown",
+        "pdf", "rtf", "rtfd",
+        "docx", "doc", "html", "htm",
+    ]
 
     enum ImportError: LocalizedError {
         case unsupported(String)
@@ -31,26 +40,32 @@ enum DocumentImporter {
         }
     }
 
-    /// Reads `url` and returns its title + extracted plain text.
+    /// Reads `url` and returns its title, plain text, and — when the source
+    /// carries formatting — an RTF representation of that formatting.
     /// `url` should already be inside a security-scoped access block if sandboxed.
-    static func extract(from url: URL) throws -> (title: String, text: String) {
+    static func extract(from url: URL) throws -> (title: String, text: String, formatted: Data?) {
         let ext = url.pathExtension.lowercased()
         let title = url.deletingPathExtension().lastPathComponent
         let text: String
+        var formatted: Data? = nil
 
         switch ext {
-        case "txt", "md", "markdown", "text":
+        case "md", "markdown":
+            let raw = try readPlainText(url)
+            text = raw
+            formatted = rtf(fromMarkdown: raw)
+        case "txt", "text":
             text = try readPlainText(url)
         case "pdf":
             text = try readPDF(url)
         case "rtf", "rtfd":
-            text = try readAttributed(url, type: .rtf)
+            (text, formatted) = try readAttributed(url, type: .rtf)
         case "docx":
-            text = try readAttributed(url, type: .officeOpenXML)
+            (text, formatted) = try readAttributed(url, type: .officeOpenXML)
         case "doc":
-            text = try readAttributed(url, type: .docFormat)
+            (text, formatted) = try readAttributed(url, type: .docFormat)
         case "html", "htm":
-            text = try readAttributed(url, type: .html)
+            (text, formatted) = try readAttributed(url, type: .html)
         default:
             // Last-ditch attempt: treat as plain text.
             if let t = try? readPlainText(url), !t.isEmpty {
@@ -62,7 +77,7 @@ enum DocumentImporter {
 
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { throw ImportError.unreadable(url.lastPathComponent) }
-        return (title, cleaned)
+        return (title, cleaned, formatted)
     }
 
     // MARK: - Readers
@@ -87,10 +102,31 @@ enum DocumentImporter {
         return pages.joined(separator: "\n\n")
     }
 
-    private static func readAttributed(_ url: URL, type: NSAttributedString.DocumentType) throws -> String {
+    /// Reads an attributed document and returns both its plain text and an RTF
+    /// serialization of its formatting.
+    private static func readAttributed(_ url: URL, type: NSAttributedString.DocumentType) throws -> (String, Data?) {
         let data = try Data(contentsOf: url)
         let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [.documentType: type]
         let attr = try NSAttributedString(data: data, options: options, documentAttributes: nil)
-        return attr.string
+        return (attr.string, rtf(from: attr))
+    }
+
+    /// Serializes an attributed string to RTF data (nil on failure / empty).
+    private static func rtf(from attr: NSAttributedString) -> Data? {
+        guard attr.length > 0 else { return nil }
+        return try? attr.data(
+            from: NSRange(location: 0, length: attr.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        )
+    }
+
+    /// Parses Markdown into an attributed string and serializes it to RTF so that
+    /// inline emphasis (bold/italic/links) survives into the viewer.
+    private static func rtf(fromMarkdown raw: String) -> Data? {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        guard let parsed = try? AttributedString(markdown: raw, options: options) else { return nil }
+        return rtf(from: NSAttributedString(parsed))
     }
 }

@@ -5,10 +5,12 @@ import UniformTypeIdentifiers
 struct LibraryView: View {
     @Environment(\.modelContext) private var context
     @Environment(Coach.self) private var coach
+    @Environment(NotesFolderManager.self) private var folderManager
     @Query(sort: \StudyDocument.importedAt, order: .reverse) private var documents: [StudyDocument]
 
     @State private var selection: StudyDocument?
     @State private var importing = false
+    @State private var linkingFolder = false
     @State private var importError: String?
     @State private var extracting: StudyDocument?
     /// IDs of documents currently having their study memory distilled.
@@ -22,7 +24,9 @@ struct LibraryView: View {
                     title: "Import your class notes",
                     message: "Export your Korean lessons from Google Docs (File ▸ Download ▸ .docx, PDF, or plain text) and import them here. The text is stored locally so you can study offline.",
                     actionTitle: "Import notes…",
-                    action: { importing = true }
+                    action: { importing = true },
+                    secondaryActionTitle: "Or link a notes folder…",
+                    secondaryAction: { linkingFolder = true }
                 )
             } else {
                 HSplitView {
@@ -35,6 +39,9 @@ struct LibraryView: View {
         }
         .navigationTitle("Library")
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                folderMenu
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     importing = true
@@ -51,6 +58,13 @@ struct LibraryView: View {
         ) { result in
             handleImport(result)
         }
+        .fileImporter(
+            isPresented: $linkingFolder,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            handleFolderLink(result)
+        }
         .alert("Import problem", isPresented: Binding(
             get: { importError != nil },
             set: { if !$0 { importError = nil } }
@@ -62,6 +76,38 @@ struct LibraryView: View {
         .sheet(item: $extracting) { doc in
             VocabExtractionSheet(document: doc)
         }
+    }
+
+    @ViewBuilder
+    private var folderMenu: some View {
+        Menu {
+            if folderManager.isLinked {
+                Section(folderManager.folderName ?? "Linked folder") {
+                    Button {
+                        folderManager.sync()
+                    } label: {
+                        Label("Sync now", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(folderManager.isSyncing)
+                    Button(role: .destructive) {
+                        folderManager.unlink()
+                    } label: {
+                        Label("Unlink folder", systemImage: "xmark.circle")
+                    }
+                }
+            } else {
+                Button {
+                    linkingFolder = true
+                } label: {
+                    Label("Link notes folder…", systemImage: "folder.badge.plus")
+                }
+            }
+        } label: {
+            Label("Notes folder", systemImage: folderManager.isLinked ? "folder.fill" : "folder.badge.gearshape")
+        }
+        .help(folderManager.isLinked
+              ? "Linked to \(folderManager.folderName ?? "a folder") — notes sync automatically"
+              : "Link a folder to import and auto-sync its notes")
     }
 
     private var docList: some View {
@@ -112,14 +158,20 @@ struct LibraryView: View {
                 }
                 .padding()
                 Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        memorySection(for: doc)
-                        Text(doc.text)
-                            .font(.body)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
+                if let data = doc.formattedData {
+                    memorySection(for: doc)
+                    RichTextView(data: data)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            memorySection(for: doc)
+                            Text(doc.text)
+                                .font(.body)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                        }
                     }
                 }
             }
@@ -203,8 +255,8 @@ struct LibraryView: View {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 do {
-                    let (title, text) = try DocumentImporter.extract(from: url)
-                    let doc = StudyDocument(title: title, sourceFilename: url.lastPathComponent, text: text)
+                    let (title, text, formatted) = try DocumentImporter.extract(from: url)
+                    let doc = StudyDocument(title: title, sourceFilename: url.lastPathComponent, text: text, formattedData: formatted)
                     context.insert(doc)
                     selection = doc
                     imported.append(doc)
@@ -220,6 +272,16 @@ struct LibraryView: View {
             if !failures.isEmpty {
                 importError = failures.joined(separator: "\n")
             }
+        }
+    }
+
+    private func handleFolderLink(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            importError = error.localizedDescription
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            folderManager.chooseFolder(url)
         }
     }
 
