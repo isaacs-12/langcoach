@@ -4,7 +4,7 @@ struct ClaudeClient: LLMClient {
     let apiKey: String
     let model: String
 
-    func send(system: String, messages: [ChatMessage]) async throws -> String {
+    func send(system: String, messages: [ChatMessage], temperature: Double?) async throws -> String {
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
             throw LLMError.badResponse("invalid URL")
         }
@@ -22,6 +22,7 @@ struct ClaudeClient: LLMClient {
             "messages": apiMessages,
         ]
         if !system.isEmpty { body["system"] = system }
+        if let temperature { body["temperature"] = temperature }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

@@ -11,6 +11,7 @@ struct TranslateView: View {
     @State private var sourceDoc: StudyDocument?
 
     @State private var prompt: String = ""
+    @State private var recentPrompts: [String] = []
     @State private var answer: String = ""
     @State private var feedback: TranslationFeedback?
     @State private var phase: Phase = .setup
@@ -197,9 +198,17 @@ struct TranslateView: View {
                 let sentence = try await coach.generateTranslationPrompt(
                     direction: direction,
                     difficulty: difficulty.rawValue,
-                    context: context
+                    context: context,
+                    avoid: recentPrompts
                 )
-                await MainActor.run { prompt = sentence; phase = .answering }
+                await MainActor.run {
+                    prompt = sentence
+                    recentPrompts.append(sentence)
+                    if recentPrompts.count > 8 {
+                        recentPrompts.removeFirst(recentPrompts.count - 8)
+                    }
+                    phase = .answering
+                }
             } catch {
                 await MainActor.run { errorText = error.localizedDescription; phase = .setup }
             }
@@ -230,6 +239,7 @@ struct TranslateView: View {
     private func endSession() {
         phase = .setup
         prompt = ""; answer = ""; feedback = nil; errorText = nil
+        recentPrompts.removeAll()
     }
 }
 

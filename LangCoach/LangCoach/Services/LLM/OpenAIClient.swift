@@ -4,7 +4,7 @@ struct OpenAIClient: LLMClient {
     let apiKey: String
     let model: String
 
-    func send(system: String, messages: [ChatMessage]) async throws -> String {
+    func send(system: String, messages: [ChatMessage], temperature: Double?) async throws -> String {
         guard let url = URL(string: "https://api.openai.com/v1/chat/completions") else {
             throw LLMError.badResponse("invalid URL")
         }
@@ -23,7 +23,7 @@ struct OpenAIClient: LLMClient {
         let body: [String: Any] = [
             "model": model,
             "messages": apiMessages,
-            "temperature": 0.7,
+            "temperature": temperature ?? 0.7,
         ]
 
         var request = URLRequest(url: url)

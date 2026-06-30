@@ -25,8 +25,12 @@ final class StudyDocument {
     /// File content-modification date at the last import, used to detect when a
     /// mounted file has changed and needs re-importing.
     var sourceModified: Date? = nil
+    /// The folder this note is filed under, or nil for top-level notes. Assigned
+    /// once (mirrored from disk on folder sync, or chosen by the user); manual
+    /// moves are preserved across re-syncs. Inverse of `NoteFolder.documents`.
+    var folder: NoteFolder? = nil
 
-    init(title: String, sourceFilename: String, text: String, importedAt: Date = .now, studyMemory: String = "", formattedData: Data? = nil, sourcePath: String = "", sourceModified: Date? = nil) {
+    init(title: String, sourceFilename: String, text: String, importedAt: Date = .now, studyMemory: String = "", formattedData: Data? = nil, sourcePath: String = "", sourceModified: Date? = nil, folder: NoteFolder? = nil) {
         self.title = title
         self.sourceFilename = sourceFilename
         self.text = text
@@ -35,6 +39,7 @@ final class StudyDocument {
         self.formattedData = formattedData
         self.sourcePath = sourcePath
         self.sourceModified = sourceModified
+        self.folder = folder
     }
 
     /// Whether a distilled study memory is available for practice context.

@@ -5,28 +5,55 @@ import UniformTypeIdentifiers
 struct LibraryView: View {
     @Environment(\.modelContext) private var context
     @Environment(Coach.self) private var coach
+    @Environment(GoogleAuth.self) private var googleAuth
     @Environment(NotesFolderManager.self) private var folderManager
     @Query(sort: \StudyDocument.importedAt, order: .reverse) private var documents: [StudyDocument]
+    @Query private var folders: [NoteFolder]
+
+    /// What the (single) file picker is currently choosing. SwiftUI only honors
+    /// one `.fileImporter` per view, so files and folders share one importer whose
+    /// content types and result handling switch on this.
+    private enum PickTarget { case files, folder }
 
     @State private var selection: StudyDocument?
-    @State private var importing = false
-    @State private var linkingFolder = false
+    @State private var pickTarget: PickTarget = .files
+    @State private var picking = false
     @State private var importError: String?
     @State private var extracting: StudyDocument?
     /// IDs of documents currently having their study memory distilled.
     @State private var distilling: Set<PersistentIdentifier> = []
+    /// Expanded folder IDs (session-only disclosure state).
+    @State private var expandedFolders: Set<PersistentIdentifier> = []
+    @State private var drag = DragContext()
+    @State private var renamingFolder: NoteFolder?
+    @State private var renameText = ""
+    @State private var pendingDeleteFolder: NoteFolder?
+    @State private var rootDropTargeted = false
+
+    /// Top-level folders, sorted by name.
+    private var rootFolders: [NoteFolder] {
+        folders
+            .filter { $0.parent == nil }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Notes not filed under any folder (newest first — `documents` is already
+    /// sorted that way).
+    private var rootDocuments: [StudyDocument] {
+        documents.filter { $0.folder == nil }
+    }
 
     var body: some View {
         Group {
-            if documents.isEmpty {
+            if documents.isEmpty && folders.isEmpty {
                 CalloutView(
                     systemImage: "tray.and.arrow.down.fill",
                     title: "Import your class notes",
                     message: "Export your Korean lessons from Google Docs (File ▸ Download ▸ .docx, PDF, or plain text) and import them here. The text is stored locally so you can study offline.",
                     actionTitle: "Import notes…",
-                    action: { importing = true },
+                    action: { pick(.files) },
                     secondaryActionTitle: "Or link a notes folder…",
-                    secondaryAction: { linkingFolder = true }
+                    secondaryAction: { pick(.folder) }
                 )
             } else {
                 HSplitView {
@@ -44,7 +71,15 @@ struct LibraryView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    importing = true
+                    createFolder(parent: nil)
+                } label: {
+                    Label("New Folder", systemImage: "folder.badge.plus")
+                }
+                .help("Create a new folder to organize your notes")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    pick(.files)
                 } label: {
                     Label("Import", systemImage: "plus")
                 }
@@ -52,18 +87,14 @@ struct LibraryView: View {
             }
         }
         .fileImporter(
-            isPresented: $importing,
-            allowedContentTypes: DocumentImporter.allowedContentTypes,
-            allowsMultipleSelection: true
+            isPresented: $picking,
+            allowedContentTypes: pickTarget == .folder ? [.folder] : DocumentImporter.allowedContentTypes,
+            allowsMultipleSelection: pickTarget == .files
         ) { result in
-            handleImport(result)
-        }
-        .fileImporter(
-            isPresented: $linkingFolder,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            handleFolderLink(result)
+            switch pickTarget {
+            case .files: handleImport(result)
+            case .folder: handleFolderLink(result)
+            }
         }
         .alert("Import problem", isPresented: Binding(
             get: { importError != nil },
@@ -76,6 +107,40 @@ struct LibraryView: View {
         .sheet(item: $extracting) { doc in
             VocabExtractionSheet(document: doc)
         }
+        .alert("Rename folder", isPresented: Binding(
+            get: { renamingFolder != nil },
+            set: { if !$0 { renamingFolder = nil } }
+        )) {
+            TextField("Folder name", text: $renameText)
+            Button("Rename") {
+                if let folder = renamingFolder {
+                    let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        folder.name = trimmed
+                        try? context.save()
+                    }
+                }
+                renamingFolder = nil
+            }
+            Button("Cancel", role: .cancel) { renamingFolder = nil }
+        }
+        .confirmationDialog(
+            "Delete this folder?",
+            isPresented: Binding(
+                get: { pendingDeleteFolder != nil },
+                set: { if !$0 { pendingDeleteFolder = nil } }
+            ),
+            presenting: pendingDeleteFolder
+        ) { folder in
+            Button("Delete Folder", role: .destructive) {
+                context.delete(folder)
+                try? context.save()
+                pendingDeleteFolder = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeleteFolder = nil }
+        } message: { _ in
+            Text("Subfolders are removed too. The notes inside are kept and moved to the top level.")
+        }
     }
 
     @ViewBuilder
@@ -84,7 +149,7 @@ struct LibraryView: View {
             if folderManager.isLinked {
                 Section(folderManager.folderName ?? "Linked folder") {
                     Button {
-                        folderManager.sync()
+                        Task { await folderManager.sync() }
                     } label: {
                         Label("Sync now", systemImage: "arrow.triangle.2.circlepath")
                     }
@@ -97,10 +162,15 @@ struct LibraryView: View {
                 }
             } else {
                 Button {
-                    linkingFolder = true
+                    pick(.folder)
                 } label: {
                     Label("Link notes folder…", systemImage: "folder.badge.plus")
                 }
+            }
+
+            if googleAuth.isConfigured {
+                Divider()
+                googleAccountSection
             }
         } label: {
             Label("Notes folder", systemImage: folderManager.isLinked ? "folder.fill" : "folder.badge.gearshape")
@@ -110,32 +180,85 @@ struct LibraryView: View {
               : "Link a folder to import and auto-sync its notes")
     }
 
-    private var docList: some View {
-        List(selection: $selection) {
-            ForEach(documents) { doc in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(doc.title)
-                        .font(.body.weight(.medium))
-                        .lineLimit(1)
-                    Text(doc.preview)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Text("\(doc.wordCount) words · \(doc.importedAt.formatted(date: .abbreviated, time: .omitted))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+    /// Google sign-in controls — only shown when an OAuth client ID is configured.
+    /// Signing in lets the app read *private* Google Docs (.gdoc shortcuts) from a
+    /// linked Drive folder.
+    @ViewBuilder
+    private var googleAccountSection: some View {
+        Section("Google Drive") {
+            if googleAuth.isSignedIn {
+                if let email = googleAuth.email {
+                    Text(email).foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
-                .tag(doc)
-                .contextMenu {
-                    Button(role: .destructive) {
-                        delete(doc)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
+                Button {
+                    Task { await folderManager.sync() }
+                } label: {
+                    Label("Import private Google Docs", systemImage: "lock.open")
+                }
+                .disabled(!folderManager.isLinked || folderManager.isSyncing)
+                Button(role: .destructive) {
+                    googleAuth.signOut()
+                } label: {
+                    Label("Sign out of Google", systemImage: "person.crop.circle.badge.xmark")
+                }
+            } else {
+                Button {
+                    signInToGoogle()
+                } label: {
+                    Label("Sign in to Google…", systemImage: "person.crop.circle.badge.plus")
                 }
             }
-            .onDelete(perform: deleteAt)
+        }
+    }
+
+    private func signInToGoogle() {
+        Task {
+            do {
+                try await googleAuth.signIn()
+                // Pull private docs from the linked folder now that we can.
+                if folderManager.isLinked { await folderManager.sync() }
+            } catch GoogleAuthError.cancelled {
+                // user dismissed — no-op
+            } catch {
+                importError = error.localizedDescription
+            }
+        }
+    }
+
+    private var docList: some View {
+        List(selection: $selection) {
+            // Top-level drop zone: drag a note or folder here to move it out of
+            // any folder. Doubles as a header anchoring the tree.
+            HStack(spacing: 6) {
+                Image(systemName: "tray.full")
+                    .foregroundStyle(.secondary)
+                Text("All Notes")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.vertical, 2)
+            .padding(.horizontal, 4)
+            .background(rootDropTargeted ? Theme.accent.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .onDrop(of: [.text], isTargeted: $rootDropTargeted) { _ in
+                guard let item = drag.item else { return false }
+                moveItem(item, to: nil, context: context)
+                drag.item = nil
+                return true
+            }
+
+            ForEach(rootFolders) { folder in
+                FolderRow(
+                    folder: folder, roots: rootFolders, selection: $selection,
+                    expanded: $expandedFolders, drag: drag,
+                    onRename: beginRename, onNewSubfolder: { createFolder(parent: $0) },
+                    onDelete: { pendingDeleteFolder = $0 }
+                )
+            }
+
+            ForEach(rootDocuments) { doc in
+                DocumentRow(doc: doc, roots: rootFolders, selection: $selection, drag: drag)
+            }
         }
     }
 
@@ -244,34 +367,50 @@ struct LibraryView: View {
 
     // MARK: - Actions
 
+    /// Set what we're choosing, then present the shared file importer. Order
+    /// matters: `pickTarget` must be set before `picking` so the importer reads
+    /// the right content types when it presents.
+    private func pick(_ target: PickTarget) {
+        pickTarget = target
+        picking = true
+    }
+
     private func handleImport(_ result: Result<[URL], Error>) {
         switch result {
         case .failure(let error):
             importError = error.localizedDescription
         case .success(let urls):
-            var failures: [String] = []
-            var imported: [StudyDocument] = []
-            for url in urls {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                do {
-                    let (title, text, formatted) = try DocumentImporter.extract(from: url)
-                    let doc = StudyDocument(title: title, sourceFilename: url.lastPathComponent, text: text, formattedData: formatted)
-                    context.insert(doc)
-                    selection = doc
-                    imported.append(doc)
-                } catch {
-                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
-                }
+            // `.gdoc` shortcuts require a network fetch, so importing is async.
+            Task { await importURLs(urls) }
+        }
+    }
+
+    @MainActor
+    private func importURLs(_ urls: [URL]) async {
+        var failures: [String] = []
+        var imported: [StudyDocument] = []
+        // Resolve a Google token once so private .gdoc shortcuts can be fetched.
+        let googleToken = await googleAuth.validAccessToken()
+        for url in urls {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let (title, text, formatted) = try await DocumentImporter.load(from: url, googleToken: googleToken)
+                let doc = StudyDocument(title: title, sourceFilename: url.lastPathComponent, text: text, formattedData: formatted)
+                context.insert(doc)
+                selection = doc
+                imported.append(doc)
+            } catch {
+                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
-            try? context.save()
-            // Distill each new note into a compact study memory in the background.
-            if coach.hasKey {
-                for doc in imported { distill(doc) }
-            }
-            if !failures.isEmpty {
-                importError = failures.joined(separator: "\n")
-            }
+        }
+        try? context.save()
+        // Distill each new note into a compact study memory in the background.
+        if coach.hasKey {
+            for doc in imported { distill(doc) }
+        }
+        if !failures.isEmpty {
+            importError = failures.joined(separator: "\n")
         }
     }
 
@@ -285,13 +424,20 @@ struct LibraryView: View {
         }
     }
 
-    private func delete(_ doc: StudyDocument) {
-        if selection == doc { selection = nil }
-        context.delete(doc)
+    // MARK: - Folders
+
+    /// Create a folder under `parent` (nil = top level), reveal it, and open the
+    /// rename prompt so the user can name it immediately.
+    private func createFolder(parent: NoteFolder?) {
+        let folder = NoteFolder(name: "New Folder", parent: parent)
+        context.insert(folder)
         try? context.save()
+        if let parent { expandedFolders.insert(parent.persistentModelID) }
+        beginRename(folder)
     }
 
-    private func deleteAt(_ offsets: IndexSet) {
-        for index in offsets { delete(documents[index]) }
+    private func beginRename(_ folder: NoteFolder) {
+        renameText = folder.name
+        renamingFolder = folder
     }
 }

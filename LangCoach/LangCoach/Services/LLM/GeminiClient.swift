@@ -4,7 +4,7 @@ struct GeminiClient: LLMClient {
     let apiKey: String
     let model: String
 
-    func send(system: String, messages: [ChatMessage]) async throws -> String {
+    func send(system: String, messages: [ChatMessage], temperature: Double?) async throws -> String {
         let urlString = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent"
         guard var components = URLComponents(string: urlString) else {
             throw LLMError.badResponse("invalid URL")
@@ -23,7 +23,7 @@ struct GeminiClient: LLMClient {
         if !system.isEmpty {
             body["system_instruction"] = ["parts": [["text": system]]]
         }
-        body["generationConfig"] = ["temperature": 0.7]
+        body["generationConfig"] = ["temperature": temperature ?? 0.7]
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

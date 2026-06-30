@@ -83,9 +83,13 @@ final class Coach {
 
     /// Single-shot prompt on the cheap/fast model, for grading and other
     /// utility tasks where cost matters more than nuance.
-    func quickComplete(system: String, user: String) async throws -> String {
+    func quickComplete(system: String, user: String, temperature: Double? = nil) async throws -> String {
         let client = try makeClient(model: quickModel)
-        return try await client.send(system: system, messages: [ChatMessage(role: .user, content: user)])
+        return try await client.send(
+            system: system,
+            messages: [ChatMessage(role: .user, content: user)],
+            temperature: temperature
+        )
     }
 
     // MARK: - High-level coaching operations
@@ -160,29 +164,61 @@ final class Coach {
         return try Self.decodeFeedback(raw)
     }
 
+    /// Topics rotated through to keep generated sentences varied.
+    private static let translationTopics = [
+        "food and cooking", "weather and seasons", "family and friends",
+        "school or work", "hobbies and free time", "shopping and money",
+        "travel and directions", "daily routines", "health and the body",
+        "technology and phones", "feelings and opinions", "nature and animals",
+        "time and schedules", "home and furniture", "clothing", "sports and exercise",
+        "music and movies", "the city and transportation", "plans and appointments",
+    ]
+
+    /// Sentence shapes rotated through so prompts aren't all simple statements.
+    private static let translationStructures = [
+        "a simple statement", "a question", "a negative sentence",
+        "a sentence in the past tense", "a sentence about a future plan",
+        "a sentence with a time expression", "a sentence with a location",
+        "a sentence expressing a want or preference",
+        "a sentence giving a reason ('because…')",
+        "a compound sentence joining two related ideas",
+    ]
+
     /// Generates a sentence to translate, optionally themed around the user's notes.
+    /// `avoid` lists recently shown sentences the model should not repeat.
     func generateTranslationPrompt(
         direction: TranslationDirection,
         difficulty: String,
-        context: String?
+        context: String?,
+        avoid: [String] = []
     ) async throws -> String {
         var system = """
         You generate single sentences for a Korean translation exercise. \
         Difficulty: \(difficulty). Output ONLY the sentence to be translated, \
-        with no quotes, labels, or extra text.
+        with no quotes, labels, or extra text. Make every sentence fresh and \
+        distinct: vary the subject, verb, vocabulary, tense, and phrasing, and \
+        avoid clichéd textbook sentences.
         """
         if direction == .enToKo {
             system += " Output an English sentence for the student to translate into Korean."
         } else {
             system += " Output a Korean sentence for the student to translate into English."
         }
-        let user: String
+
+        let topic = Self.translationTopics.randomElement() ?? "everyday life"
+        let structure = Self.translationStructures.randomElement() ?? "a simple statement"
+        var user: String
         if let context, !context.isEmpty {
             user = "Base the vocabulary and themes on these class notes:\n\(String(context.prefix(4000)))"
         } else {
             user = "Use common everyday vocabulary appropriate to the difficulty."
         }
-        return try await quickComplete(system: system, user: user)
+        user += "\n\nFor this one, write \(structure) about \(topic)."
+        if !avoid.isEmpty {
+            let list = avoid.suffix(8).map { "- \($0)" }.joined(separator: "\n")
+            user += "\n\nDo NOT repeat or closely resemble any of these recent sentences:\n\(list)"
+        }
+        return try await quickComplete(system: system, user: user, temperature: 0.9)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

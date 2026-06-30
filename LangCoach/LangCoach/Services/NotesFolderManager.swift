@@ -15,6 +15,7 @@ import SwiftData
 final class NotesFolderManager {
     nonisolated private let container: ModelContainer
     nonisolated private let coach: Coach
+    nonisolated private let googleAuth: GoogleAuth
 
     /// The currently linked folder, if any.
     private(set) var folderURL: URL? = nil
@@ -32,9 +33,10 @@ final class NotesFolderManager {
 
     private static let bookmarkKey = "notesFolderBookmark"
 
-    nonisolated init(container: ModelContainer, coach: Coach) {
+    nonisolated init(container: ModelContainer, coach: Coach, googleAuth: GoogleAuth) {
         self.container = container
         self.coach = coach
+        self.googleAuth = googleAuth
     }
 
     /// Restores any previously linked folder and begins watching. Call once after
@@ -94,12 +96,12 @@ final class NotesFolderManager {
 
         watcher?.stop()
         let watcher = FolderWatcher(url: url) { [weak self] in
-            Task { @MainActor in self?.sync() }
+            Task { @MainActor in await self?.sync() }
         }
         watcher.start()
         self.watcher = watcher
 
-        sync()
+        Task { await sync() }
     }
 
     private func releaseAccess() {
@@ -112,12 +114,16 @@ final class NotesFolderManager {
     /// Scan the folder and reconcile it against stored documents: import new
     /// files, re-import changed ones. Deleted files are intentionally left in
     /// place to avoid data loss.
-    func sync() {
+    func sync() async {
         guard let folderURL, !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false; lastSyncDate = .now }
 
         let files = scanFiles(in: folderURL)
+
+        // Resolve a Google token once (if signed in) so private .gdoc shortcuts in
+        // the folder can be fetched via the Drive API.
+        let googleToken = await googleAuth.validAccessToken()
 
         // Map existing folder-sourced docs by their source path.
         let descriptor = FetchDescriptor<StudyDocument>(
@@ -127,27 +133,37 @@ final class NotesFolderManager {
         var byPath: [String: StudyDocument] = [:]
         for doc in existing { byPath[doc.sourcePath] = doc }
 
+        // Cache of mirrored folders by their source directory path, so repeated
+        // files in the same subdirectory reuse one NoteFolder.
+        let folderDescriptor = FetchDescriptor<NoteFolder>(
+            predicate: #Predicate { $0.sourcePath != "" }
+        )
+        var folderByPath: [String: NoteFolder] = [:]
+        for f in (try? context.fetch(folderDescriptor)) ?? [] { folderByPath[f.sourcePath] = f }
+
         var touched: [StudyDocument] = []
         for (url, modified) in files {
             let path = url.path
             if let doc = byPath[path] {
                 // Re-import only if the file changed since we last read it.
                 guard let modified, let stored = doc.sourceModified, modified > stored else { continue }
-                if let extracted = extract(url) {
+                if let extracted = await extract(url, token: googleToken) {
                     doc.title = extracted.title
                     doc.text = extracted.text
                     doc.formattedData = extracted.formatted
                     doc.sourceModified = modified
                     touched.append(doc)
                 }
-            } else if let extracted = extract(url) {
+            } else if let extracted = await extract(url, token: googleToken) {
                 let doc = StudyDocument(
                     title: extracted.title,
                     sourceFilename: url.lastPathComponent,
                     text: extracted.text,
                     formattedData: extracted.formatted,
                     sourcePath: path,
-                    sourceModified: modified
+                    sourceModified: modified,
+                    // Mirror the on-disk subdirectory structure into NoteFolders.
+                    folder: folder(for: url, root: folderURL, cache: &folderByPath)
                 )
                 context.insert(doc)
                 touched.append(doc)
@@ -157,6 +173,33 @@ final class NotesFolderManager {
         guard !touched.isEmpty else { return }
         try? context.save()
         distill(touched)
+    }
+
+    /// Find-or-create the chain of `NoteFolder`s mirroring `fileURL`'s parent
+    /// directories, relative to the mounted `root`, and return the deepest one
+    /// (nil when the file sits directly in the root). Folders are keyed by their
+    /// absolute source path so re-syncs reuse them instead of duplicating.
+    private func folder(for fileURL: URL, root: URL, cache: inout [String: NoteFolder]) -> NoteFolder? {
+        let rootComponents = root.standardizedFileURL.pathComponents
+        let dirComponents = fileURL.standardizedFileURL.deletingLastPathComponent().pathComponents
+        // The subdirectory components below the mounted root.
+        guard dirComponents.count > rootComponents.count else { return nil }
+        let relative = Array(dirComponents[rootComponents.count...])
+
+        var parent: NoteFolder? = nil
+        var path = root.standardizedFileURL.path
+        for name in relative {
+            path += "/" + name
+            if let existing = cache[path] {
+                parent = existing
+                continue
+            }
+            let created = NoteFolder(name: name, sourcePath: path, parent: parent)
+            context.insert(created)
+            cache[path] = created
+            parent = created
+        }
+        return parent
     }
 
     /// Enumerate supported files in the folder tree with their modification dates.
@@ -178,10 +221,10 @@ final class NotesFolderManager {
         return result
     }
 
-    private func extract(_ url: URL) -> (title: String, text: String, formatted: Data?)? {
+    private func extract(_ url: URL, token: String?) async -> (title: String, text: String, formatted: Data?)? {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        return try? DocumentImporter.extract(from: url)
+        return try? await DocumentImporter.load(from: url, googleToken: token)
     }
 
     /// Distill newly imported / changed notes into study memory, mirroring the

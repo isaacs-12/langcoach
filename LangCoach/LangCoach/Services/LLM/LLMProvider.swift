@@ -82,5 +82,13 @@ enum LLMError: LocalizedError {
 /// A provider-agnostic chat interface. Implementations adapt to each vendor's API.
 protocol LLMClient {
     /// Sends a system prompt + conversation and returns the assistant's reply text.
-    func send(system: String, messages: [ChatMessage]) async throws -> String
+    /// `temperature` overrides the client's default sampling temperature when non-nil.
+    func send(system: String, messages: [ChatMessage], temperature: Double?) async throws -> String
+}
+
+extension LLMClient {
+    /// Convenience overload that uses the client's default sampling temperature.
+    func send(system: String, messages: [ChatMessage]) async throws -> String {
+        try await send(system: system, messages: messages, temperature: nil)
+    }
 }
