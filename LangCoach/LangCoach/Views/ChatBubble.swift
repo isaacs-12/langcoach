@@ -3,6 +3,8 @@ import SwiftUI
 struct ChatBubble: View {
     let turn: ChatTurn
     var showTranslation: Bool
+    /// Per-bubble peek, independent of the global toggle.
+    @State private var revealed = false
 
     var body: some View {
         switch turn.role {
@@ -29,11 +31,25 @@ struct ChatBubble: View {
                         .padding(.vertical, 9).padding(.horizontal, 13)
                         .background(.background.secondary, in: BubbleShape(isMe: false))
                         .textSelection(.enabled)
-                    if showTranslation, let t = turn.translation, !t.isEmpty {
-                        Text(t)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    if let t = turn.translation, !t.isEmpty {
+                        if showTranslation || revealed {
+                            Text(t)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 4)
+                                .textSelection(.enabled)
+                        } else {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.15)) { revealed = true }
+                            } label: {
+                                Label("Translate", systemImage: "character.bubble")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
                             .padding(.leading, 4)
+                            .help("Reveal the English translation of this reply")
+                        }
                     }
                 }
                 Spacer(minLength: 60)
