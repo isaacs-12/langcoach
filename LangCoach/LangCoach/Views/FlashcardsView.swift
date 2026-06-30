@@ -1,15 +1,25 @@
 import SwiftUI
 import SwiftData
 
+/// Sidebar selection: a single deck, or the cross-deck "All Decks" pool.
+private enum DeckSelection: Hashable {
+    case all
+    case deck(Deck)
+}
+
 struct FlashcardsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Deck.createdAt, order: .reverse) private var decks: [Deck]
 
-    @State private var selectedDeck: Deck?
-    @State private var studying: Deck?
+    @State private var selection: DeckSelection? = .all
+    @State private var studying: StudyRequest?
     @State private var addingCard = false
+    @State private var addCardDeck: Deck?
     @State private var creatingDeck = false
     @State private var newDeckName = ""
+
+    /// Every card across every deck — the pool for cross-set study.
+    private var allCards: [Flashcard] { decks.flatMap(\.cards) }
 
     var body: some View {
         Group {
@@ -38,11 +48,11 @@ struct FlashcardsView: View {
                 }
             }
         }
-        .sheet(item: $studying) { deck in
-            StudySessionView(deck: deck)
+        .sheet(item: $studying) { request in
+            StudySessionView(title: request.title, cards: request.cards)
         }
         .sheet(isPresented: $addingCard) {
-            if let deck = selectedDeck {
+            if let deck = addCardDeck {
                 CardEditorView(deck: deck)
             }
         }
@@ -54,28 +64,45 @@ struct FlashcardsView: View {
     }
 
     private var deckList: some View {
-        List(selection: $selectedDeck) {
-            ForEach(decks) { deck in
+        List(selection: $selection) {
+            Section {
                 HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(deck.name).font(.body.weight(.medium))
-                        Text("\(deck.cards.count) cards")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                    Label("All Decks", systemImage: "square.stack.3d.up")
+                        .font(.body.weight(.medium))
                     Spacer()
-                    if deck.dueCount > 0 {
-                        Text("\(deck.dueCount)")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(Theme.accent, in: Capsule())
+                    let starred = allCards.lazy.filter(\.isStarred).count
+                    if starred > 0 {
+                        Label("\(starred)", systemImage: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.warning)
                     }
                 }
                 .padding(.vertical, 3)
-                .tag(deck)
-                .contextMenu {
-                    Button(role: .destructive) { delete(deck) } label: {
-                        Label("Delete deck", systemImage: "trash")
+                .tag(DeckSelection.all)
+            }
+            Section("Decks") {
+                ForEach(decks) { deck in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(deck.name).font(.body.weight(.medium))
+                            Text("\(deck.cards.count) cards")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if deck.dueCount > 0 {
+                            Text("\(deck.dueCount)")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .background(Theme.accent, in: Capsule())
+                        }
+                    }
+                    .padding(.vertical, 3)
+                    .tag(DeckSelection.deck(deck))
+                    .contextMenu {
+                        Button(role: .destructive) { delete(deck) } label: {
+                            Label("Delete deck", systemImage: "trash")
+                        }
                     }
                 }
             }
@@ -84,14 +111,13 @@ struct FlashcardsView: View {
 
     @ViewBuilder
     private var deckDetail: some View {
-        if let deck = selectedDeck ?? decks.first {
+        switch selection {
+        case .all, .none:
+            AllDecksDetailView(cards: allCards, onStudy: { studying = $0 })
+        case .deck(let deck):
             DeckDetailView(deck: deck,
-                           onStudy: { studying = deck },
-                           onAddCard: { selectedDeck = deck; addingCard = true })
-        } else {
-            CalloutView(systemImage: "rectangle.stack",
-                        title: "Select a deck",
-                        message: "Choose a deck to study or manage its cards.")
+                           onStudy: { studying = $0 },
+                           onAddCard: { addCardDeck = deck; addingCard = true })
         }
     }
 
@@ -101,14 +127,55 @@ struct FlashcardsView: View {
         let deck = Deck(name: name)
         context.insert(deck)
         try? context.save()
-        selectedDeck = deck
+        selection = .deck(deck)
         newDeckName = ""
     }
 
     private func delete(_ deck: Deck) {
-        if selectedDeck == deck { selectedDeck = nil }
+        if selection == .deck(deck) { selection = .all }
         context.delete(deck)
         try? context.save()
+    }
+}
+
+// MARK: - All-decks detail
+
+/// Cross-set study landing: study all cards or starred cards spanning every deck.
+private struct AllDecksDetailView: View {
+    let cards: [Flashcard]
+    var onStudy: (StudyRequest) -> Void
+
+    @State private var showSetup = false
+
+    private var starredCount: Int { cards.filter(\.isStarred).count }
+    private var dueCount: Int { cards.filter(\.isDue).count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("All Decks").font(.title2.bold())
+                HStack(spacing: 10) {
+                    StatBadge(value: "\(dueCount)", label: "Due", tint: Theme.accent)
+                    StatBadge(value: "\(starredCount)", label: "Starred", tint: Theme.warning)
+                    StatBadge(value: "\(cards.count)", label: "Total", tint: .secondary)
+                    Spacer()
+                    Button { showSetup = true } label: { Label("Study", systemImage: "play.fill") }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(cards.isEmpty)
+                        .popover(isPresented: $showSetup, arrowEdge: .bottom) {
+                            StudySetupView(title: "All Decks", pool: cards) { request in
+                                showSetup = false
+                                onStudy(request)
+                            }
+                        }
+                }
+            }
+            .padding()
+            Divider()
+            CalloutView(systemImage: "square.stack.3d.up",
+                        title: "Study across all decks",
+                        message: "Tap Study to review every card or just your starred cards, in order or shuffled.")
+        }
     }
 }
 
@@ -116,10 +183,11 @@ struct FlashcardsView: View {
 
 private struct DeckDetailView: View {
     @Bindable var deck: Deck
-    var onStudy: () -> Void
+    var onStudy: (StudyRequest) -> Void
     var onAddCard: () -> Void
 
     @Environment(\.modelContext) private var context
+    @State private var showSetup = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -135,14 +203,20 @@ private struct DeckDetailView: View {
                 }
                 HStack(spacing: 10) {
                     StatBadge(value: "\(deck.dueCount)", label: "Due", tint: Theme.accent)
-                    StatBadge(value: "\(deck.newCount)", label: "New", tint: Theme.accentSoft)
+                    StatBadge(value: "\(deck.cards.filter(\.isStarred).count)", label: "Starred", tint: Theme.warning)
                     StatBadge(value: "\(deck.cards.count)", label: "Total", tint: .secondary)
                     Spacer()
                     Button(action: onAddCard) { Label("Add card", systemImage: "plus") }
                         .buttonStyle(.bordered)
-                    Button(action: onStudy) { Label("Study", systemImage: "play.fill") }
+                    Button { showSetup = true } label: { Label("Study", systemImage: "play.fill") }
                         .buttonStyle(.borderedProminent)
                         .disabled(deck.cards.isEmpty)
+                        .popover(isPresented: $showSetup, arrowEdge: .bottom) {
+                            StudySetupView(title: deck.name, pool: deck.cards) { request in
+                                showSetup = false
+                                onStudy(request)
+                            }
+                        }
                 }
             }
             .padding()
@@ -162,6 +236,16 @@ private struct DeckDetailView: View {
             List {
                 ForEach(deck.cards.sorted(by: { $0.createdAt > $1.createdAt })) { card in
                     HStack {
+                        Button {
+                            card.isStarred.toggle()
+                            try? context.save()
+                        } label: {
+                            Image(systemName: card.isStarred ? "star.fill" : "star")
+                                .foregroundStyle(card.isStarred ? Theme.warning : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(card.isStarred ? "Unstar this card" : "Star this card")
+
                         VStack(alignment: .leading, spacing: 2) {
                             Text(card.korean).font(.body.weight(.medium))
                             Text(card.english).font(.caption).foregroundStyle(.secondary)
@@ -177,6 +261,13 @@ private struct DeckDetailView: View {
                     }
                     .padding(.vertical, 2)
                     .contextMenu {
+                        Button {
+                            card.isStarred.toggle()
+                            try? context.save()
+                        } label: {
+                            Label(card.isStarred ? "Unstar" : "Star",
+                                  systemImage: card.isStarred ? "star.slash" : "star")
+                        }
                         Button(role: .destructive) {
                             context.delete(card)
                             try? context.save()

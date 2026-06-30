@@ -1,9 +1,128 @@
 import SwiftUI
 import SwiftData
 
-/// A focused spaced-repetition review session for one deck.
+// MARK: - Session configuration
+
+/// Which subset of cards to study.
+enum StudyFilter: String, CaseIterable, Identifiable {
+    case all
+    case starred
+    case due
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .all: return "All cards"
+        case .starred: return "Starred"
+        case .due: return "Due now"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .all: return "rectangle.stack"
+        case .starred: return "star.fill"
+        case .due: return "clock"
+        }
+    }
+}
+
+/// The order cards are presented in during a session.
+enum StudyOrder: String, CaseIterable, Identifiable {
+    case inOrder
+    case shuffle
+
+    var id: String { rawValue }
+    var label: String { self == .inOrder ? "In order" : "Shuffle" }
+    var systemImage: String { self == .inOrder ? "list.number" : "shuffle" }
+}
+
+/// Builds the ordered queue for a session from a pool of cards.
+func resolveStudyCards(_ pool: [Flashcard], filter: StudyFilter, order: StudyOrder) -> [Flashcard] {
+    var result: [Flashcard]
+    switch filter {
+    case .all:
+        result = pool
+    case .starred:
+        result = pool.filter(\.isStarred)
+    case .due:
+        result = pool.filter(\.isDue)
+    }
+    switch order {
+    case .inOrder:
+        // Natural reading order for browsing; due date when cramming what's due.
+        if filter == .due {
+            result.sort { $0.dueDate < $1.dueDate }
+        } else {
+            result.sort { $0.createdAt < $1.createdAt }
+        }
+    case .shuffle:
+        result.shuffle()
+    }
+    return result
+}
+
+/// A resolved request to study a specific set of cards. Identifiable so it can drive a `.sheet`.
+struct StudyRequest: Identifiable {
+    let id = UUID()
+    let title: String
+    let cards: [Flashcard]
+}
+
+// MARK: - Setup popover
+
+/// Lets the user pick a filter and order for a pool of cards, then start a session.
+struct StudySetupView: View {
+    let title: String
+    let pool: [Flashcard]
+    var onStart: (StudyRequest) -> Void
+
+    @State private var filter: StudyFilter = .all
+    @State private var order: StudyOrder = .inOrder
+
+    private var resolved: [Flashcard] { resolveStudyCards(pool, filter: filter, order: order) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Study \(title)").font(.headline)
+
+            Picker("Cards", selection: $filter) {
+                ForEach(StudyFilter.allCases) { f in
+                    Label(f.label, systemImage: f.systemImage).tag(f)
+                }
+            }
+            .pickerStyle(.radioGroup)
+
+            Picker("Order", selection: $order) {
+                ForEach(StudyOrder.allCases) { o in
+                    Label(o.label, systemImage: o.systemImage).tag(o)
+                }
+            }
+            .pickerStyle(.radioGroup)
+
+            HStack {
+                Text("\(resolved.count) card\(resolved.count == 1 ? "" : "s")")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    onStart(StudyRequest(title: title, cards: resolved))
+                } label: {
+                    Label("Start", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(resolved.isEmpty)
+            }
+        }
+        .padding()
+        .frame(width: 260)
+    }
+}
+
+// MARK: - Session
+
+/// A focused spaced-repetition review session over a pre-resolved set of cards.
 struct StudySessionView: View {
-    let deck: Deck
+    let title: String
+    let cards: [Flashcard]
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
 
@@ -45,11 +164,22 @@ struct StudySessionView: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(deck.name).font(.headline)
+                Text(title).font(.headline)
                 Text("\(reviewedCount) reviewed · \(max(0, queue.count - index)) left")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            if let card = currentCard {
+                Button {
+                    card.isStarred.toggle()
+                    try? context.save()
+                } label: {
+                    Image(systemName: card.isStarred ? "star.fill" : "star")
+                        .foregroundStyle(card.isStarred ? Theme.warning : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(card.isStarred ? "Unstar this card" : "Star this card")
+            }
             Toggle(isOn: $flipFront) {
                 Text(flipFront ? "KO → EN" : "EN → KO").font(.caption)
             }
@@ -168,16 +298,8 @@ struct StudySessionView: View {
     // MARK: - Logic
 
     private func startSession() {
-        var due = deck.dueCards()
-        // If nothing is strictly due, fall back to new cards then a small refresher.
-        if due.isEmpty {
-            due = deck.cards.filter(\.isNew)
-        }
-        if due.isEmpty {
-            due = Array(deck.cards.sorted { $0.dueDate < $1.dueDate }.prefix(20))
-        }
-        queue = due
-        startCount = due.count
+        queue = cards
+        startCount = cards.count
         index = 0
         revealed = false
         reviewedCount = 0

@@ -12,6 +12,8 @@ final class Flashcard {
     var example: String
     var notes: String
     var createdAt: Date
+    /// Whether the user has starred this card for focused study.
+    var isStarred: Bool = false
 
     // MARK: SM-2 scheduling state
     var dueDate: Date
