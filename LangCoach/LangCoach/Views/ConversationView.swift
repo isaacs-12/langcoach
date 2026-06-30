@@ -23,7 +23,7 @@ struct ConversationView: View {
         var label: String { rawValue.capitalized }
         var guidance: String {
             switch self {
-            case .beginner: return "Use very simple words and short sentences. Mostly present tense. Add furigana-style romanization sparingly."
+            case .beginner: return "Use very simple words and short sentences. Mostly present tense."
             case .intermediate: return "Use everyday vocabulary and a natural mix of tenses and connectors."
             case .advanced: return "Text naturally as you would with a native, using idioms and varied grammar."
             }
@@ -181,6 +181,10 @@ struct ConversationView: View {
         casual, natural. Level: \(level.rawValue). \(level.guidance)
         Keep each text reply concise (1-3 short sentences) and always keep the \
         conversation going by asking a question or inviting a response.
+
+        Write "reply" in pure Korean only. Never add romanization, pronunciation, \
+        or transliteration (e.g. "(jal ji-nae-se-yo?)") — the English goes in \
+        "translation", not in the reply.
 
         Whenever the student writes something, check their Korean for mistakes \
         (grammar, particles, word choice, naturalness).
