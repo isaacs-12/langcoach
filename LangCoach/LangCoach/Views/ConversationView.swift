@@ -15,7 +15,7 @@ struct ConversationView: View {
     @State private var draft: String = ""
     @State private var sending = false
     @State private var errorText: String?
-    @State private var showTranslations = true
+    @State private var showTranslations = false
 
     enum Level: String, CaseIterable, Identifiable {
         case beginner, intermediate, advanced
