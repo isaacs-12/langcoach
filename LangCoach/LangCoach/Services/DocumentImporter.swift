@@ -37,7 +37,7 @@ enum DocumentImporter {
         case unsupported(String)
         case unreadable(String)
         case googleDocUnshared(String)
-        case googleDocFetchFailed(String)
+        case googleDocFetchFailed(String, String)
 
         var errorDescription: String? {
             switch self {
@@ -45,8 +45,8 @@ enum DocumentImporter {
             case .unreadable(let name): return "Could not read text from \(name)"
             case .googleDocUnshared(let name):
                 return "“\(name)” is a private Google Doc, so its text isn't stored on your Mac — the .gdoc file is just a link. Sign in to Google to import private docs, or in Drive set “Anyone with the link” to Viewer and re-import."
-            case .googleDocFetchFailed(let name):
-                return "Couldn't fetch “\(name)” from Google Drive. Make sure you're signed in to the account that owns it and the doc still exists."
+            case .googleDocFetchFailed(let name, let detail):
+                return "Couldn't fetch “\(name)” from Google Drive — \(detail)"
             }
         }
     }
@@ -142,12 +142,21 @@ enum DocumentImporter {
         do {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
-            throw ImportError.googleDocFetchFailed(title)
+            throw ImportError.googleDocFetchFailed(title, error.localizedDescription)
         }
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw ImportError.googleDocFetchFailed(title)
+            let apiMessage = driveErrorMessage(from: data) ?? ""
+            throw ImportError.googleDocFetchFailed(title, "HTTP \(http.statusCode) \(apiMessage)")
         }
         return try parseGoogleHTML(data, title: title)
+    }
+
+    /// Pulls Google's `error.message` out of a Drive API JSON error body.
+    private static func driveErrorMessage(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = json["error"] as? [String: Any],
+              let message = error["message"] as? String else { return nil }
+        return message
     }
 
     /// Unauthenticated best-effort export. A private doc redirects through
@@ -193,6 +202,40 @@ enum DocumentImporter {
             return id
         }
         return nil
+    }
+
+    // MARK: - Bold-aware text
+
+    /// Renders `formattedData` (RTF) back to plain text, but wraps runs the author
+    /// **bolded** in `**…**` markers, so a downstream model can see which words the
+    /// student emphasized (bold = "remember this"). Returns nil when there's no
+    /// usable formatting or no bold at all — callers fall back to plain text.
+    static func boldAnnotatedText(fromRTF data: Data) -> String? {
+        let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [.documentType: NSAttributedString.DocumentType.rtf]
+        guard let attr = try? NSAttributedString(data: data, options: options, documentAttributes: nil),
+              attr.length > 0 else { return nil }
+
+        let whole = attr.string as NSString
+        var out = ""
+        var sawBold = false
+        attr.enumerateAttribute(.font, in: NSRange(location: 0, length: attr.length)) { value, range, _ in
+            let piece = whole.substring(with: range)
+            if let font = value as? NSFont, font.fontDescriptor.symbolicTraits.contains(.bold) {
+                out += wrapBold(piece)
+                sawBold = true
+            } else {
+                out += piece
+            }
+        }
+        return sawBold ? out : nil
+    }
+
+    /// Wraps the meaningful core of a bold run in `**…**` while keeping any leading
+    /// / trailing whitespace outside the markers.
+    private static func wrapBold(_ run: String) -> String {
+        let trimmed = run.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let core = run.range(of: trimmed) else { return run }
+        return "\(run[run.startIndex..<core.lowerBound])**\(trimmed)**\(run[core.upperBound..<run.endIndex])"
     }
 
     // MARK: - Readers

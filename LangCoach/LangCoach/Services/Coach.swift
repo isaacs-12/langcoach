@@ -119,19 +119,31 @@ final class Coach {
         let system = """
         You are a Korean teaching assistant. Read the class notes and produce a \
         compact STUDY MEMORY that captures everything needed to practice this \
-        lesson, with no fluff. Use exactly this plain-text format:
+        lesson, with no fluff.
+
+        The student bolds what matters most. Text wrapped in **double asterisks** \
+        was BOLD in the notes — treat it as high priority and make sure it is \
+        captured, especially the key grammar structure and important vocab. (The \
+        ** markers are only in the input; never include them in your output.)
+
+        Use exactly this plain-text format:
+
+        KEY STRUCTURE: the single most important grammar structure this lesson \
+        teaches — the one thing to remember — as "pattern — one-line explanation", \
+        with a short Korean example if one is present. This is usually a bolded \
+        pattern. If the lesson has no clear grammar structure, write: none
 
         VOCAB:
         - 한국어 — English meaning (reading if helpful)
-        (the most important items, up to ~30)
+        (the most important items, up to ~30; always include bolded words)
 
         GRAMMAR:
         - pattern — one-line explanation
-        (key grammar/particles introduced in the lesson)
+        (other key grammar/particles introduced in the lesson, beyond KEY STRUCTURE)
 
         THEMES: a short comma-separated list of topics or scenarios
 
-        Keep Korean in Korean. Stay under ~250 words. Output ONLY this text — \
+        Keep Korean in Korean. Stay under ~280 words. Output ONLY this text — \
         no markdown fences, no preamble, no closing remarks. If the notes contain \
         no Korean content, output exactly: (no Korean content)
         """

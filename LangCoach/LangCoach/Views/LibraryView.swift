@@ -352,7 +352,9 @@ struct LibraryView: View {
         let id = doc.persistentModelID
         guard coach.hasKey, !distilling.contains(id) else { return }
         distilling.insert(id)
-        let text = doc.text
+        // Prefer bold-annotated text so the distiller can prioritize what the
+        // student emphasized; fall back to plain text when there's no formatting.
+        let text = doc.formattedData.flatMap { DocumentImporter.boldAnnotatedText(fromRTF: $0) } ?? doc.text
         Task {
             let memory = try? await coach.distillNotes(text)
             await MainActor.run {

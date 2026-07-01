@@ -232,7 +232,8 @@ final class NotesFolderManager {
     private func distill(_ docs: [StudyDocument]) {
         guard coach.hasKey else { return }
         for doc in docs {
-            let text = doc.text
+            // Prefer bold-annotated text so emphasized items are prioritized.
+            let text = doc.formattedData.flatMap { DocumentImporter.boldAnnotatedText(fromRTF: $0) } ?? doc.text
             Task { [weak self] in
                 guard let self else { return }
                 let memory = try? await self.coach.distillNotes(text)

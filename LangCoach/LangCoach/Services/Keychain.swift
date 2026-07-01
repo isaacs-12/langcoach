@@ -4,7 +4,7 @@ import Security
 /// Minimal Keychain wrapper for storing the LLM API key securely on-device.
 /// Keys never touch UserDefaults or SwiftData.
 enum Keychain {
-    private static let service = "com.teamgifty.LangCoach.apikey"
+    private static let service = "com.byisaacs.LangCoach.apikey"
 
     static func set(_ value: String, account: String) {
         let data = Data(value.utf8)
