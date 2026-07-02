@@ -15,7 +15,7 @@ struct LibraryView: View {
     /// content types and result handling switch on this.
     private enum PickTarget { case files, folder }
 
-    @State private var selection: StudyDocument?
+    @State private var selection: Set<StudyDocument> = []
     @State private var pickTarget: PickTarget = .files
     @State private var picking = false
     @State private var importError: String?
@@ -241,9 +241,9 @@ struct LibraryView: View {
             .padding(.horizontal, 4)
             .background(rootDropTargeted ? Theme.accent.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 6))
             .onDrop(of: [.text], isTargeted: $rootDropTargeted) { _ in
-                guard let item = drag.item else { return false }
-                moveItem(item, to: nil, context: context)
-                drag.item = nil
+                guard !drag.items.isEmpty else { return false }
+                moveItems(drag.items, to: nil, context: context)
+                drag.items = []
                 return true
             }
 
@@ -262,9 +262,23 @@ struct LibraryView: View {
         }
     }
 
+    /// The note shown in the detail pane: the single selected note, or the
+    /// newest note when nothing is selected. Nil while several notes are selected.
+    private var detailDoc: StudyDocument? {
+        if selection.count == 1 { return selection.first }
+        if selection.isEmpty { return documents.first }
+        return nil
+    }
+
     @ViewBuilder
     private var docDetail: some View {
-        if let doc = selection ?? documents.first {
+        if selection.count > 1 {
+            CalloutView(
+                systemImage: "checklist",
+                title: "\(selection.count) notes selected",
+                message: "Drag them into a folder, or right-click to move or delete them together."
+            )
+        } else if let doc = detailDoc {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -282,7 +296,9 @@ struct LibraryView: View {
                 .padding()
                 Divider()
                 if let data = doc.formattedData {
-                    memorySection(for: doc)
+                    // Give the memory a bounded, scrollable box so a long vocab list
+                    // neither clips nor collapses against the rich-text view below.
+                    memorySection(for: doc, capHeight: 300)
                     RichTextView(data: data)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -309,8 +325,10 @@ struct LibraryView: View {
 
     // MARK: - Study memory
 
+    /// `capHeight` bounds the study-memory text to a scrollable box (used where the
+    /// section shares space with the rich-text view, so a long list can't clip).
     @ViewBuilder
-    private func memorySection(for doc: StudyDocument) -> some View {
+    private func memorySection(for doc: StudyDocument, capHeight: CGFloat? = nil) -> some View {
         let isDistilling = distilling.contains(doc.persistentModelID)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -331,10 +349,34 @@ struct LibraryView: View {
                 }
             }
             if doc.hasMemory {
-                Text(doc.studyMemory)
+                let memoryText = Text(doc.studyMemory)
                     .font(.callout)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let capHeight {
+                    // minHeight floor keeps the box from collapsing to nothing next
+                    // to the greedy rich-text view; it scrolls when vocab is long.
+                    ScrollView { memoryText.padding(.trailing, 4) }
+                        .frame(minHeight: 160, maxHeight: capHeight)
+                } else {
+                    memoryText
+                }
+                if !doc.themes.isEmpty {
+                    Divider()
+                    Text("Conversation themes")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    FlowLayout(spacing: 6) {
+                        ForEach(doc.themes, id: \.self) { theme in
+                            Text(theme)
+                                .font(.caption.weight(.medium))
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 10)
+                                .background(Theme.accent.opacity(0.14), in: Capsule())
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             } else {
                 Text(coach.hasKey
                      ? "A compact summary used for translation and conversation practice. Generated automatically on import."
@@ -356,13 +398,22 @@ struct LibraryView: View {
         // student emphasized; fall back to plain text when there's no formatting.
         let text = doc.formattedData.flatMap { DocumentImporter.boldAnnotatedText(fromRTF: $0) } ?? doc.text
         Task {
-            let memory = try? await coach.distillNotes(text)
-            await MainActor.run {
-                if let memory, !memory.isEmpty {
-                    doc.studyMemory = memory
-                    try? context.save()
+            do {
+                let memory = try await coach.distillNotes(text)
+                await MainActor.run {
+                    if !memory.isEmpty {
+                        doc.studyMemory = memory
+                        try? context.save()
+                    }
+                    distilling.remove(id)
                 }
-                distilling.remove(id)
+            } catch {
+                // Surface the failure instead of silently leaving an empty memory
+                // (which reads as "no vocab"). Retries already happened in Coach.
+                await MainActor.run {
+                    distilling.remove(id)
+                    importError = "Couldn't generate study memory for “\(doc.title)”: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -400,7 +451,7 @@ struct LibraryView: View {
                 let (title, text, formatted) = try await DocumentImporter.load(from: url, googleToken: googleToken)
                 let doc = StudyDocument(title: title, sourceFilename: url.lastPathComponent, text: text, formattedData: formatted)
                 context.insert(doc)
-                selection = doc
+                selection = [doc]
                 imported.append(doc)
             } catch {
                 failures.append("\(url.lastPathComponent): \(error.localizedDescription)")

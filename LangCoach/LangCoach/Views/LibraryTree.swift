@@ -8,28 +8,40 @@ enum DragItem {
     case folder(NoteFolder)
 }
 
-/// Holds the in-flight drag across rows. The dragged value is stashed here on
+/// Holds the in-flight drag across rows. The dragged values are stashed here on
 /// `.onDrag` and read back on `.onDrop`, so the dropped provider payload is
-/// irrelevant (the drag never leaves the app).
+/// irrelevant (the drag never leaves the app). Dragging a note that's part of a
+/// multi-selection carries every selected note at once.
 @Observable
 final class DragContext {
-    var item: DragItem? = nil
+    var items: [DragItem] = []
 }
 
-/// Reparent a note or folder under `target` (nil = top level). Folder moves that
-/// would create a cycle (into itself or a descendant) are rejected.
+/// Reparent a single note or folder under `target` (nil = top level), without
+/// saving. Returns whether the move was applied — folder moves that would create
+/// a cycle (into itself or a descendant) are rejected.
 @MainActor
-func moveItem(_ item: DragItem, to target: NoteFolder?, context: ModelContext) {
+private func reparent(_ item: DragItem, to target: NoteFolder?) -> Bool {
     switch item {
     case .document(let doc):
         doc.folder = target
+        return true
     case .folder(let folder):
         if let target {
-            guard folder !== target, !folder.contains(target) else { return }
+            guard folder !== target, !folder.contains(target) else { return false }
         }
         folder.parent = target
+        return true
     }
-    try? context.save()
+}
+
+/// Reparent one or more notes/folders under `target` (nil = top level), saving
+/// once if anything changed.
+@MainActor
+func moveItems(_ items: [DragItem], to target: NoteFolder?, context: ModelContext) {
+    var changed = false
+    for item in items where reparent(item, to: target) { changed = true }
+    if changed { try? context.save() }
 }
 
 // MARK: - Sorting helpers
@@ -50,20 +62,21 @@ extension NoteFolder {
 /// A "Move to ▸" submenu listing every folder (indented by depth) plus a
 /// top-level option. Invalid destinations are disabled.
 struct MoveToMenu: View {
-    let item: DragItem
+    let items: [DragItem]
     let roots: [NoteFolder]
     @Environment(\.modelContext) private var context
 
     var body: some View {
         Menu {
-            Button("Top level") { moveItem(item, to: nil, context: context) }
-                .disabled(isCurrentParent(nil))
+            Button("Top level") { moveItems(items, to: nil, context: context) }
+                .disabled(allAlreadyIn(nil))
             Divider()
             ForEach(roots) { root in
                 rows(for: root, depth: 0)
             }
         } label: {
-            Label("Move to", systemImage: "folder")
+            Label(items.count > 1 ? "Move \(items.count) items to" : "Move to",
+                  systemImage: "folder")
         }
     }
 
@@ -75,7 +88,7 @@ struct MoveToMenu: View {
         AnyView(
             Group {
                 Button {
-                    moveItem(item, to: folder, context: context)
+                    moveItems(items, to: folder, context: context)
                 } label: {
                     Text(String(repeating: "    ", count: depth) + folder.name)
                 }
@@ -87,17 +100,26 @@ struct MoveToMenu: View {
         )
     }
 
-    private func isCurrentParent(_ target: NoteFolder?) -> Bool {
+    private func isCurrentParent(_ item: DragItem, _ target: NoteFolder?) -> Bool {
         switch item {
         case .document(let doc): return doc.folder === target
         case .folder(let f): return f.parent === target
         }
     }
 
+    /// A destination is only redundant when *every* item already lives there.
+    private func allAlreadyIn(_ target: NoteFolder?) -> Bool {
+        !items.isEmpty && items.allSatisfy { isCurrentParent($0, target) }
+    }
+
+    /// Disabled when the move is a no-op for all items, or would place any
+    /// dragged folder inside itself or one of its own descendants.
     private func isInvalid(_ target: NoteFolder) -> Bool {
-        if isCurrentParent(target) { return true }
-        if case .folder(let f) = item { return f.contains(target) }
-        return false
+        if allAlreadyIn(target) { return true }
+        return items.contains { item in
+            if case .folder(let f) = item { return f === target || f.contains(target) }
+            return false
+        }
     }
 }
 
@@ -106,9 +128,15 @@ struct MoveToMenu: View {
 struct DocumentRow: View {
     let doc: StudyDocument
     let roots: [NoteFolder]
-    @Binding var selection: StudyDocument?
+    @Binding var selection: Set<StudyDocument>
     @Bindable var drag: DragContext
     @Environment(\.modelContext) private var context
+
+    /// The notes this row's actions apply to: the whole selection when this row
+    /// is part of a multi-selection, otherwise just this note.
+    private var affectedDocs: [StudyDocument] {
+        selection.contains(doc) && selection.count > 1 ? Array(selection) : [doc]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -126,18 +154,24 @@ struct DocumentRow: View {
         .padding(.vertical, 4)
         .tag(doc)
         .onDrag {
-            drag.item = .document(doc)
-            return NSItemProvider(object: doc.title as NSString)
+            let docs = affectedDocs
+            drag.items = docs.map { .document($0) }
+            let label = docs.count > 1 ? "\(docs.count) notes" : doc.title
+            return NSItemProvider(object: label as NSString)
         }
         .contextMenu {
-            MoveToMenu(item: .document(doc), roots: roots)
+            let docs = affectedDocs
+            MoveToMenu(items: docs.map { .document($0) }, roots: roots)
             Divider()
             Button(role: .destructive) {
-                if selection == doc { selection = nil }
-                context.delete(doc)
+                for d in docs {
+                    selection.remove(d)
+                    context.delete(d)
+                }
                 try? context.save()
             } label: {
-                Label("Delete", systemImage: "trash")
+                Label(docs.count > 1 ? "Delete \(docs.count) Notes" : "Delete",
+                      systemImage: "trash")
             }
         }
     }
@@ -148,7 +182,7 @@ struct DocumentRow: View {
 struct FolderRow: View {
     let folder: NoteFolder
     let roots: [NoteFolder]
-    @Binding var selection: StudyDocument?
+    @Binding var selection: Set<StudyDocument>
     @Binding var expanded: Set<PersistentIdentifier>
     @Bindable var drag: DragContext
     let onRename: (NoteFolder) -> Void
@@ -201,14 +235,14 @@ struct FolderRow: View {
         .padding(.horizontal, 4)
         .background(targeted ? Theme.accent.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 6))
         .onDrag {
-            drag.item = .folder(folder)
+            drag.items = [.folder(folder)]
             return NSItemProvider(object: folder.name as NSString)
         }
         .onDrop(of: [.text], isTargeted: $targeted) { _ in
-            guard let item = drag.item else { return false }
-            moveItem(item, to: folder, context: context)
+            guard !drag.items.isEmpty else { return false }
+            moveItems(drag.items, to: folder, context: context)
             expanded.insert(folder.persistentModelID)
-            drag.item = nil
+            drag.items = []
             return true
         }
         .contextMenu {
@@ -218,7 +252,7 @@ struct FolderRow: View {
             Button { onRename(folder) } label: {
                 Label("Rename…", systemImage: "pencil")
             }
-            MoveToMenu(item: .folder(folder), roots: roots)
+            MoveToMenu(items: [.folder(folder)], roots: roots)
             Divider()
             Button(role: .destructive) { onDelete(folder) } label: {
                 Label("Delete Folder", systemImage: "trash")

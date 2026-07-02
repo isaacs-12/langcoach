@@ -77,6 +77,13 @@ enum LLMError: LocalizedError {
             return "Request failed (HTTP \(code)): \(body)"
         }
     }
+
+    /// Transient failures worth retrying: rate limits (429) and server-side
+    /// errors (5xx, e.g. Gemini's 503 "high demand"). Key/4xx errors are not.
+    var isRetryable: Bool {
+        if case .http(let code, _) = self { return code == 429 || (500...599).contains(code) }
+        return false
+    }
 }
 
 /// A provider-agnostic chat interface. Implementations adapt to each vendor's API.

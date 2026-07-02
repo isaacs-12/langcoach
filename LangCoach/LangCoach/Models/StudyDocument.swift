@@ -47,6 +47,28 @@ final class StudyDocument {
         !studyMemory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// The lesson's practice themes, parsed from the `THEMES:` line of the
+    /// distilled study memory (see `Coach.distillNotes`). These drive the tappable
+    /// topic suggestions in conversation practice, so the same lesson themes can be
+    /// practiced again and again. Empty when no memory exists or none were listed.
+    var themes: [String] {
+        guard hasMemory else { return [] }
+        // Tolerate markdown/list decoration the model sometimes adds despite the
+        // plain-text instruction (e.g. "**THEMES:**", "## THEMES", "- Themes:").
+        let decoration = CharacterSet(charactersIn: " \t*#->•")
+        for line in studyMemory.split(whereSeparator: \.isNewline) {
+            let cleaned = line.trimmingCharacters(in: decoration)
+            guard let range = cleaned.range(of: "THEMES", options: [.caseInsensitive, .anchored])
+            else { continue }
+            let list = cleaned[range.upperBound...].drop { $0 == ":" || $0 == "*" || $0 == " " }
+            return list
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " *_")) }
+                .filter { !$0.isEmpty }
+        }
+        return []
+    }
+
     /// A short preview of the document body for list display.
     var preview: String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

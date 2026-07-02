@@ -92,6 +92,9 @@ struct ConversationView: View {
                             Text("Most recent note").tag(Optional<StudyDocument>.none)
                             ForEach(documents) { Text($0.title).tag(Optional($0)) }
                         }
+                        if !activeThemes.isEmpty {
+                            themeChips
+                        }
                     }
                 }
             }
@@ -214,6 +217,45 @@ struct ConversationView: View {
         return p
     }
 
+    /// Themes of the note currently feeding the chat — the tappable topic
+    /// suggestions. Empty until the note has a distilled memory with a THEMES line.
+    private var activeThemes: [String] {
+        guard useNotes, let doc = sourceDoc ?? documents.first else { return [] }
+        return doc.themes
+    }
+
+    /// Tappable chips of the lesson's themes, plus a "surprise me" that rotates
+    /// through them — so the same lesson topics can be practiced over and over.
+    private var themeChips: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Practice a theme from this lesson")
+                .font(.caption).foregroundStyle(.secondary)
+            FlowLayout(spacing: 8) {
+                ForEach(activeThemes, id: \.self) { theme in
+                    Button { toggleTheme(theme) } label: { Text(theme) }
+                        .buttonStyle(ChipStyle(selected: topic == theme))
+                }
+                Button { rotateTheme() } label: {
+                    Label("Surprise me", systemImage: "dice")
+                }
+                .buttonStyle(ChipStyle(selected: false))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Set this theme as the topic, or clear it if it's already selected.
+    private func toggleTheme(_ theme: String) {
+        topic = (topic == theme) ? "" : theme
+    }
+
+    /// Pick a lesson theme at random, preferring one different from the current
+    /// topic so repeated taps keep cycling through the lesson.
+    private func rotateTheme() {
+        let pool = activeThemes.filter { $0 != topic }
+        topic = (pool.isEmpty ? activeThemes : pool).randomElement() ?? topic
+    }
+
     /// The distilled study memory to steer the chat, if the user opted in.
     private func notesContext() -> String? {
         guard useNotes, let doc = sourceDoc ?? documents.first else { return nil }
@@ -323,3 +365,24 @@ struct ConversationReply {
         return ConversationReply(reply: raw, translation: "", hasErrors: false, correction: "", note: "")
     }
 }
+
+// MARK: - Theme chips
+
+/// A pill-shaped chip button. Filled with the accent when selected.
+private struct ChipStyle: ButtonStyle {
+    var selected: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+            .padding(.vertical, 5)
+            .padding(.horizontal, 12)
+            .background(
+                selected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.primary.opacity(0.07)),
+                in: Capsule()
+            )
+            .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+

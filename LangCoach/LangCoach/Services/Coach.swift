@@ -70,10 +70,29 @@ final class Coach {
         }
     }
 
+    /// Retries a transient-failing LLM call (rate limits, 5xx, dropped
+    /// connections) with exponential backoff. Providers like Gemini return 503
+    /// "high demand" under load; without this, a single blip silently fails a
+    /// distillation or grade. Non-transient errors (bad key, 4xx) propagate at once.
+    private func withRetry<T>(_ operation: () async throws -> T) async throws -> T {
+        var delay: UInt64 = 700_000_000 // 0.7s, doubled each attempt
+        for attempt in 0..<4 {
+            do {
+                return try await operation()
+            } catch {
+                let transient = (error as? LLMError)?.isRetryable ?? (error is URLError)
+                guard transient, attempt < 3 else { throw error }
+                try? await Task.sleep(nanoseconds: delay)
+                delay *= 2
+            }
+        }
+        throw LLMError.badResponse("exhausted retries")
+    }
+
     /// Low-level chat entry point. Uses the high-quality conversation model.
     func reply(system: String, messages: [ChatMessage]) async throws -> String {
         let client = try makeClient(model: model)
-        return try await client.send(system: system, messages: messages)
+        return try await withRetry { try await client.send(system: system, messages: messages) }
     }
 
     /// Single-shot prompt on the high-quality model.
@@ -85,11 +104,13 @@ final class Coach {
     /// utility tasks where cost matters more than nuance.
     func quickComplete(system: String, user: String, temperature: Double? = nil) async throws -> String {
         let client = try makeClient(model: quickModel)
-        return try await client.send(
-            system: system,
-            messages: [ChatMessage(role: .user, content: user)],
-            temperature: temperature
-        )
+        return try await withRetry {
+            try await client.send(
+                system: system,
+                messages: [ChatMessage(role: .user, content: user)],
+                temperature: temperature
+            )
+        }
     }
 
     // MARK: - High-level coaching operations
@@ -112,43 +133,102 @@ final class Coach {
         return try Self.decodeVocab(raw)
     }
 
+    /// The structured shape the distiller returns. Asking for JSON (rather than a
+    /// free-form 4-section blob) is far more reliable on the fast model, which
+    /// otherwise intermittently drops whole sections — sometimes vocab, sometimes
+    /// themes. Keys are optional so a partial response still decodes.
+    private struct DistilledMemory: Decodable {
+        var keyStructure: String?
+        var vocab: [String]?
+        var grammar: [String]?
+        var themes: [String]?
+    }
+
     /// Distills raw lesson notes into a compact "study memory" — the key vocab,
     /// grammar points, and themes needed to drive practice — so the full note
     /// text never has to be sent to the model again. Uses the cheap/fast model.
+    ///
+    /// The model returns JSON, which we validate and then render into the stable
+    /// plain-text format the rest of the app reads. We retry if vocab comes back
+    /// empty rather than storing a memory with no words to practice.
     func distillNotes(_ notes: String) async throws -> String {
         let system = """
-        You are a Korean teaching assistant. Read the class notes and produce a \
-        compact STUDY MEMORY that captures everything needed to practice this \
-        lesson, with no fluff.
+        You are a Korean teaching assistant. Read the class notes and distill them \
+        into a STUDY MEMORY for practice.
 
-        The student bolds what matters most. Text wrapped in **double asterisks** \
-        was BOLD in the notes — treat it as high priority and make sure it is \
-        captured, especially the key grammar structure and important vocab. (The \
-        ** markers are only in the input; never include them in your output.)
+        Text wrapped in **double asterisks** was BOLD in the notes (high priority — \
+        capture it, especially the key grammar structure). But bold is a hint, NOT a \
+        filter: also include the lesson's other important vocabulary and grammar \
+        even when it wasn't bolded. Never include the ** markers in your output.
 
-        Use exactly this plain-text format:
+        Respond ONLY with a JSON object (no markdown fences) with EXACTLY these \
+        keys, ALL required:
+        "keyStructure": string — the single most important grammar structure this \
+        lesson teaches, as "pattern — one-line explanation" with a short Korean \
+        example if present. Empty string "" if the lesson has no clear structure.
+        "vocab": array of strings, each "한국어 — English meaning" (add a reading if \
+        helpful). Include EVERY useful word or phrase the lesson introduces — aim \
+        for 15-30, more when the lesson is vocab-heavy. This MUST NOT be empty when \
+        the notes contain Korean words.
+        "grammar": array of strings, each "pattern — one-line explanation", for the \
+        other key grammar/particles beyond keyStructure.
+        "themes": array of 3-6 short conversation topics or scenarios (noun \
+        phrases, e.g. "ordering at a café", "asking prices").
 
-        KEY STRUCTURE: the single most important grammar structure this lesson \
-        teaches — the one thing to remember — as "pattern — one-line explanation", \
-        with a short Korean example if one is present. This is usually a bolded \
-        pattern. If the lesson has no clear grammar structure, write: none
+        Keep Korean in Korean. If the notes contain no Korean at all, return every \
+        key empty.
+        """
+        let input = String(notes.prefix(12_000))
+        var last: DistilledMemory?
+        for _ in 0..<3 {
+            let raw = try await quickComplete(system: system, user: input, temperature: 0.2)
+            guard let parsed = Self.decodeMemory(raw) else { continue }
+            last = parsed
+            // Accept as soon as we have real vocab; otherwise retry (a fresh sample
+            // usually recovers the dropped list).
+            if !(parsed.vocab ?? []).isEmpty { return Self.renderMemory(parsed) }
+        }
+        // No vocab after retries: render what we have, or signal an empty note.
+        if let last, Self.hasContent(last) { return Self.renderMemory(last) }
+        return "(no Korean content)"
+    }
+
+    private static func decodeMemory(_ raw: String) -> DistilledMemory? {
+        guard let data = stripFences(raw).data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(DistilledMemory.self, from: data)
+    }
+
+    private static func hasContent(_ m: DistilledMemory) -> Bool {
+        !(m.vocab ?? []).isEmpty || !(m.grammar ?? []).isEmpty
+            || !(m.themes ?? []).isEmpty || !(m.keyStructure ?? "").isEmpty
+    }
+
+    /// Renders parsed JSON back into the plain-text "study memory" the UI displays,
+    /// the themes parser reads, and conversation/translation send as context.
+    private static func renderMemory(_ m: DistilledMemory) -> String {
+        func bullets(_ items: [String]?) -> String {
+            (items ?? [])
+                .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " \t-•")) }
+                .filter { !$0.isEmpty }
+                .map { "- \($0)" }
+                .joined(separator: "\n")
+        }
+        let ks = (m.keyStructure ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let themes = (m.themes ?? [])
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        return """
+        KEY STRUCTURE: \(ks.isEmpty ? "none" : ks)
 
         VOCAB:
-        - 한국어 — English meaning (reading if helpful)
-        (the most important items, up to ~30; always include bolded words)
+        \(bullets(m.vocab))
 
         GRAMMAR:
-        - pattern — one-line explanation
-        (other key grammar/particles introduced in the lesson, beyond KEY STRUCTURE)
+        \(bullets(m.grammar))
 
-        THEMES: a short comma-separated list of topics or scenarios
-
-        Keep Korean in Korean. Stay under ~280 words. Output ONLY this text — \
-        no markdown fences, no preamble, no closing remarks. If the notes contain \
-        no Korean content, output exactly: (no Korean content)
+        THEMES: \(themes)
         """
-        return try await quickComplete(system: system, user: String(notes.prefix(12_000)))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Grades a translation attempt. `direction` describes which way to translate.

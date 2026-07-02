@@ -99,6 +99,43 @@ struct CalloutView: View {
     }
 }
 
+/// A simple wrapping layout: lays subviews left-to-right and wraps to the next
+/// line when they run out of width. Used for variable-width theme chips/pills.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(subviews, maxWidth: proposal.width ?? .infinity).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (index, offset) in arrange(subviews, maxWidth: bounds.width).offsets {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + offset.x, y: bounds.minY + offset.y),
+                proposal: .unspecified
+            )
+        }
+    }
+
+    private func arrange(_ subviews: Subviews, maxWidth: CGFloat) -> (size: CGSize, offsets: [(Int, CGPoint)]) {
+        var offsets: [(Int, CGPoint)] = []
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            offsets.append((index, CGPoint(x: x, y: y)))
+            x += size.width + spacing
+            widest = max(widest, x - spacing)
+            rowHeight = max(rowHeight, size.height)
+        }
+        return (CGSize(width: widest, height: y + rowHeight), offsets)
+    }
+}
+
 /// A small pill-shaped stat badge.
 struct StatBadge: View {
     var value: String
