@@ -20,6 +20,11 @@ open ~/Library/Developer/Xcode/DerivedData/LangCoach-*/Build/Products/Debug/Lang
 
 There is **no test target** and no linter configured — verification is by building and running the app.
 
+## Releases & updates
+
+- `make release` (wrapping [scripts/release.sh](scripts/release.sh)) cuts a real release: signed with a Developer ID Application identity, notarized + stapled via `notarytool` (keychain profile `langcoach-notary`), tagged `vX.Y.Z`, pushed, and published as a GitHub release with `LangCoach.zip` attached. With no `VERSION=` arg it bumps the last version component of the newest tag; `make release VERSION=1.0.0` sets it explicitly. `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` are injected at build time from the tag/commit count — the pbxproj value only matters for dev builds.
+- **In-app updates** ([UpdateChecker.swift](LangCoach/LangCoach/Services/UpdateChecker.swift)) hit the GitHub `releases/latest` API once a day (and on demand via the app menu), compare the tag against `CFBundleShortVersionString`, and drive [UpdateSheetView.swift](LangCoach/LangCoach/Views/UpdateSheetView.swift). Install = download zip → `ditto` unzip → swap the bundle in place (an `NSOpenPanel` grant of the install folder covers the sandbox) → relaunch. The release asset **must** be named `LangCoach.zip` — both the updater and the README download link depend on it.
+
 ## Architecture
 
 **`Coach` is the center of gravity.** It's an `@Observable` class created once at the App level ([LangCoachApp.swift](LangCoach/LangCoach/LangCoachApp.swift)) and injected via `.environment(coach)` into **both** the `WindowGroup` and the `Settings` scene. This dual injection is load-bearing: `Settings` is a separate scene tree, so omitting it from there makes `@Environment(Coach.self)` crash when Settings opens. Views read it with `@Environment(Coach.self)`; never create a second `Coach()` instance (it would desync key/model state across scenes).
@@ -41,7 +46,7 @@ When adding an LLM-backed feature, deliberately choose `complete` vs `quickCompl
 - **Keychain** ([Keychain.swift](LangCoach/LangCoach/Services/Keychain.swift)) — API keys only, one per provider (`keychainAccount`). Keys never touch UserDefaults or SwiftData.
 - **UserDefaults** — non-secret settings (`providerKind`, `model`, `quickModel`).
 
-**App is sandboxed.** Entitlements allow outbound network + user-selected read-only file access. File import (`DocumentImporter`, supports txt/md/pdf/rtf/docx/doc/html) must run inside a `startAccessingSecurityScopedResource()` block — see `handleImport` in LibraryView.
+**App is sandboxed.** Entitlements allow outbound network + user-selected read-write file access (read-write is required by the self-update install flow). File import (`DocumentImporter`, supports txt/md/pdf/rtf/docx/doc/html) must run inside a `startAccessingSecurityScopedResource()` block — see `handleImport` in LibraryView.
 
 **Flashcards use SM-2 spaced repetition** ([SRS.swift](LangCoach/LangCoach/Services/SRS.swift)), an Anki-style four-button (`again/hard/good/easy`) scheduler that mutates a `Flashcard`'s interval/ease/due date in place.
 

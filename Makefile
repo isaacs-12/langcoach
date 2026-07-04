@@ -18,7 +18,7 @@ RELEASE_APP  := $(DERIVED)/Build/Products/Release/$(APP)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build run start restart release open-release stop clean reset
+.PHONY: help build run start restart release release-unsigned open-release stop clean reset
 
 
 
@@ -36,11 +36,19 @@ start: run ## Alias for `run`
 
 restart: stop run ## Quit the running app, rebuild, relaunch
 
-release: ## Build Release (unsigned) -> $(RELEASE_APP)
+# Cut a real release: signed + notarized build, git tag, GitHub release.
+# `make release` bumps the last version component (0.0.1 -> 0.0.2);
+# `make release VERSION=1.0.0` releases an explicit version instead.
+# One-time setup (Developer ID cert, notary profile, gh auth) is documented
+# at the top of scripts/release.sh.
+release: ## Sign, notarize, tag & publish a release (VERSION=x.y.z optional)
+	VERSION="$(VERSION)" ./scripts/release.sh
+
+release-unsigned: ## Build Release (unsigned, local only) -> $(RELEASE_APP)
 	$(XCB) -configuration Release build $(UNSIGNED)
 	@echo "Release app: $(RELEASE_APP)"
 
-open-release: release ## Build Release then launch it
+open-release: release-unsigned ## Build unsigned Release then launch it
 	open $(RELEASE_APP)
 
 stop: ## Quit the running app

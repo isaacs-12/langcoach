@@ -39,16 +39,20 @@ enum AppSection: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @Environment(Coach.self) private var coach
+    @Environment(UpdateChecker.self) private var updater
     @State private var selection: AppSection? = .library
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
+        @Bindable var updater = updater
         NavigationSplitView {
             sidebar
         } detail: {
             detail
         }
         .frame(minWidth: 900, minHeight: 600)
+        .sheet(isPresented: $updater.showSheet) { UpdateSheetView() }
+        .task { await updater.checkAtLaunch() }
     }
 
     private var sidebar: some View {
@@ -149,5 +153,6 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environment(Coach())
+        .environment(UpdateChecker())
         .modelContainer(for: [StudyDocument.self, Deck.self, Flashcard.self], inMemory: true)
 }
