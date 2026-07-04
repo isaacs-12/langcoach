@@ -16,6 +16,8 @@ struct LibraryView: View {
     private enum PickTarget { case files, folder }
 
     @State private var selection: Set<StudyDocument> = []
+    /// How notes are ordered in every list (top level and inside folders).
+    @AppStorage("libraryNoteSort") private var noteSort: NoteSortOrder = .dateDesc
     @State private var pickTarget: PickTarget = .files
     @State private var picking = false
     @State private var importError: String?
@@ -37,10 +39,9 @@ struct LibraryView: View {
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    /// Notes not filed under any folder (newest first — `documents` is already
-    /// sorted that way).
+    /// Notes not filed under any folder, ordered by the chosen sort.
     private var rootDocuments: [StudyDocument] {
-        documents.filter { $0.folder == nil }
+        noteSort.sorted(documents.filter { $0.folder == nil })
     }
 
     var body: some View {
@@ -66,6 +67,11 @@ struct LibraryView: View {
         }
         .navigationTitle("Library")
         .toolbar {
+            if !documents.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    sortMenu
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 folderMenu
             }
@@ -141,6 +147,20 @@ struct LibraryView: View {
         } message: { _ in
             Text("Subfolders are removed too. The notes inside are kept and moved to the top level.")
         }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort notes by", selection: $noteSort) {
+                ForEach(NoteSortOrder.allCases) { order in
+                    Text(order.label).tag(order)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label("Sort notes", systemImage: "arrow.up.arrow.down")
+        }
+        .help("Change how notes are ordered")
     }
 
     @ViewBuilder
@@ -250,7 +270,7 @@ struct LibraryView: View {
             ForEach(rootFolders) { folder in
                 FolderRow(
                     folder: folder, roots: rootFolders, selection: $selection,
-                    expanded: $expandedFolders, drag: drag,
+                    expanded: $expandedFolders, drag: drag, sort: noteSort,
                     onRename: beginRename, onNewSubfolder: { createFolder(parent: $0) },
                     onNewFolder: { createFolder(withSelection: $0) },
                     onDelete: { pendingDeleteFolder = $0 }

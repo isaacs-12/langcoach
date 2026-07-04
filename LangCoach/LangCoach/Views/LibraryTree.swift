@@ -46,14 +46,39 @@ func moveItems(_ items: [DragItem], to target: NoteFolder?, context: ModelContex
 
 // MARK: - Sorting helpers
 
+/// How the note lists are ordered. Applies uniformly to the top-level notes and
+/// the notes inside every folder. Persisted via `@AppStorage`, so it's stored by
+/// raw value.
+enum NoteSortOrder: String, CaseIterable, Identifiable {
+    case dateDesc, dateAsc, titleAsc, titleDesc
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .dateDesc: return "Newest first"
+        case .dateAsc:  return "Oldest first"
+        case .titleAsc: return "Title (A–Z)"
+        case .titleDesc: return "Title (Z–A)"
+        }
+    }
+
+    func sorted(_ docs: [StudyDocument]) -> [StudyDocument] {
+        switch self {
+        case .dateDesc: return docs.sorted { $0.importedAt > $1.importedAt }
+        case .dateAsc:  return docs.sorted { $0.importedAt < $1.importedAt }
+        case .titleAsc:
+            return docs.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        case .titleDesc:
+            return docs.sorted { $0.title.localizedStandardCompare($1.title) == .orderedDescending }
+        }
+    }
+}
+
 extension NoteFolder {
     /// Subfolders sorted by name for stable display.
     var sortedChildren: [NoteFolder] {
         children.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
-    /// Notes filed directly here, newest first (matching the flat list's order).
-    var sortedDocuments: [StudyDocument] {
-        documents.sorted { $0.importedAt > $1.importedAt }
     }
 }
 
@@ -193,6 +218,7 @@ struct FolderRow: View {
     @Binding var selection: Set<StudyDocument>
     @Binding var expanded: Set<PersistentIdentifier>
     @Bindable var drag: DragContext
+    let sort: NoteSortOrder
     let onRename: (NoteFolder) -> Void
     let onNewSubfolder: (NoteFolder) -> Void
     let onNewFolder: ([StudyDocument]) -> Void
@@ -215,12 +241,12 @@ struct FolderRow: View {
             ForEach(folder.sortedChildren) { child in
                 FolderRow(
                     folder: child, roots: roots, selection: $selection,
-                    expanded: $expanded, drag: drag,
+                    expanded: $expanded, drag: drag, sort: sort,
                     onRename: onRename, onNewSubfolder: onNewSubfolder,
                     onNewFolder: onNewFolder, onDelete: onDelete
                 )
             }
-            ForEach(folder.sortedDocuments) { doc in
+            ForEach(sort.sorted(folder.documents)) { doc in
                 DocumentRow(doc: doc, roots: roots, selection: $selection,
                             drag: drag, onNewFolder: onNewFolder)
             }
