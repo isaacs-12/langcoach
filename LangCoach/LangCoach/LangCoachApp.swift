@@ -40,6 +40,8 @@ struct LangCoachApp: App {
         }
         .modelContainer(container)
         .windowToolbarStyle(.unified)
+        // Open large and only slightly wide — closer to square than the old default.
+        .defaultSize(width: 1240, height: 940)
 
         // A standalone reader window for a single note, opened from the Library
         // with `openWindow(id: "note-reader", value: <persistentModelID>)`. Keyed
@@ -54,6 +56,8 @@ struct LangCoachApp: App {
         }
         .modelContainer(container)
         .windowToolbarStyle(.unified)
+        // Portrait, page-like proportions rather than a wide slab.
+        .defaultSize(width: 700, height: 880)
 
         Settings {
             SettingsView()

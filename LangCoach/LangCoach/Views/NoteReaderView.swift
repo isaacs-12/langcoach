@@ -42,12 +42,17 @@ struct NoteReaderView: View {
 
     @ViewBuilder
     private func reader(_ doc: StudyDocument) -> some View {
-        VStack(spacing: 0) {
+        Group {
             if showMemory, doc.hasMemory {
-                memoryBanner(doc)
-                Divider()
+                // A draggable divider lets the reader trade space between the
+                // study memory and the note itself.
+                VSplitView {
+                    memoryBanner(doc)
+                    body(doc)
+                }
+            } else {
+                body(doc)
             }
-            body(doc)
         }
         .navigationTitle(doc.title)
         .navigationSubtitle("\(doc.wordCount) words")
@@ -83,6 +88,7 @@ struct NoteReaderView: View {
                 Label("Smaller text", systemImage: "textformat.size.smaller")
             }
             .disabled(fontScale <= Self.minScale)
+            .help("Decrease the reading text size")
 
             Button {
                 fontScale = min(Self.maxScale, fontScale + 0.1)
@@ -90,6 +96,7 @@ struct NoteReaderView: View {
                 Label("Larger text", systemImage: "textformat.size.larger")
             }
             .disabled(fontScale >= Self.maxScale)
+            .help("Increase the reading text size")
         }
         .help("Adjust the reading text size")
     }
@@ -100,7 +107,7 @@ struct NoteReaderView: View {
     private func body(_ doc: StudyDocument) -> some View {
         if let data = doc.formattedData {
             RichTextView(data: data, fontScale: fontScale, paper: true)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 160, maxHeight: .infinity)
         } else {
             // Plain-text note: mirror the rich-text reader's paper surface and
             // adaptive text so it reads the same way at any size.
@@ -112,6 +119,7 @@ struct NoteReaderView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(28)
             }
+            .frame(minHeight: 160, maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor))
         }
     }
@@ -146,7 +154,7 @@ struct NoteReaderView: View {
             }
         }
         .padding()
-        .frame(maxHeight: 200)
+        .frame(minHeight: 80, idealHeight: 180, maxHeight: .infinity)
         .background(Theme.accent.opacity(0.06))
     }
 }
