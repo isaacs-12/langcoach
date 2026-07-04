@@ -157,6 +157,8 @@ struct DocumentRow: View {
     @Bindable var drag: DragContext
     /// Create a new folder containing the given notes (and rename it inline).
     let onNewFolder: ([StudyDocument]) -> Void
+    /// Open a note in its own reader window (double-click or context menu).
+    let onOpen: (StudyDocument) -> Void
     @Environment(\.modelContext) private var context
 
     /// The notes this row's actions apply to: the whole selection when this row
@@ -180,6 +182,10 @@ struct DocumentRow: View {
         }
         .padding(.vertical, 4)
         .tag(doc)
+        .contentShape(Rectangle())
+        // Double-click opens the note in its own reader window; single clicks
+        // still fall through to the List for selection.
+        .onTapGesture(count: 2) { onOpen(doc) }
         .onDrag {
             let docs = affectedDocs
             drag.items = docs.map { .document($0) }
@@ -188,6 +194,12 @@ struct DocumentRow: View {
         }
         .contextMenu {
             let docs = affectedDocs
+            Button {
+                onOpen(doc)
+            } label: {
+                Label("Open in New Window", systemImage: "arrow.up.forward.square")
+            }
+            Divider()
             Button {
                 onNewFolder(docs)
             } label: {
@@ -223,6 +235,7 @@ struct FolderRow: View {
     let onNewSubfolder: (NoteFolder) -> Void
     let onNewFolder: ([StudyDocument]) -> Void
     let onDelete: (NoteFolder) -> Void
+    let onOpen: (StudyDocument) -> Void
     @Environment(\.modelContext) private var context
     @State private var targeted = false
 
@@ -243,12 +256,12 @@ struct FolderRow: View {
                     folder: child, roots: roots, selection: $selection,
                     expanded: $expanded, drag: drag, sort: sort,
                     onRename: onRename, onNewSubfolder: onNewSubfolder,
-                    onNewFolder: onNewFolder, onDelete: onDelete
+                    onNewFolder: onNewFolder, onDelete: onDelete, onOpen: onOpen
                 )
             }
             ForEach(sort.sorted(folder.documents)) { doc in
                 DocumentRow(doc: doc, roots: roots, selection: $selection,
-                            drag: drag, onNewFolder: onNewFolder)
+                            drag: drag, onNewFolder: onNewFolder, onOpen: onOpen)
             }
         } label: {
             label

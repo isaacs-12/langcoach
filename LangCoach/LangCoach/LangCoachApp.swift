@@ -41,6 +41,20 @@ struct LangCoachApp: App {
         .modelContainer(container)
         .windowToolbarStyle(.unified)
 
+        // A standalone reader window for a single note, opened from the Library
+        // with `openWindow(id: "note-reader", value: <persistentModelID>)`. Keyed
+        // on the note's identifier so re-opening the same note reuses its window.
+        WindowGroup(id: "note-reader", for: PersistentIdentifier.self) { $documentID in
+            if let documentID {
+                NoteReaderView(documentID: documentID)
+                    .environment(coach)
+                    .environment(googleAuth)
+                    .environment(folderManager)
+            }
+        }
+        .modelContainer(container)
+        .windowToolbarStyle(.unified)
+
         Settings {
             SettingsView()
                 .environment(coach)

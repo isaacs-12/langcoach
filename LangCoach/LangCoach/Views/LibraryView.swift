@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.openWindow) private var openWindow
     @Environment(Coach.self) private var coach
     @Environment(GoogleAuth.self) private var googleAuth
     @Environment(NotesFolderManager.self) private var folderManager
@@ -273,13 +274,15 @@ struct LibraryView: View {
                     expanded: $expandedFolders, drag: drag, sort: noteSort,
                     onRename: beginRename, onNewSubfolder: { createFolder(parent: $0) },
                     onNewFolder: { createFolder(withSelection: $0) },
-                    onDelete: { pendingDeleteFolder = $0 }
+                    onDelete: { pendingDeleteFolder = $0 },
+                    onOpen: openNote
                 )
             }
 
             ForEach(rootDocuments) { doc in
                 DocumentRow(doc: doc, roots: rootFolders, selection: $selection,
-                            drag: drag, onNewFolder: { createFolder(withSelection: $0) })
+                            drag: drag, onNewFolder: { createFolder(withSelection: $0) },
+                            onOpen: openNote)
             }
         }
     }
@@ -309,6 +312,12 @@ struct LibraryView: View {
                     }
                     Spacer()
                     Button {
+                        openNote(doc)
+                    } label: {
+                        Label("Open", systemImage: "arrow.up.forward.square")
+                    }
+                    .help("Open this note in its own reader window")
+                    Button {
                         extracting = doc
                     } label: {
                         Label("Extract vocab", systemImage: "sparkles")
@@ -321,7 +330,7 @@ struct LibraryView: View {
                     // Give the memory a bounded, scrollable box so a long vocab list
                     // neither clips nor collapses against the rich-text view below.
                     memorySection(for: doc, capHeight: 300)
-                    RichTextView(data: data)
+                    RichTextView(data: data, paper: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
@@ -530,5 +539,11 @@ struct LibraryView: View {
     private func beginRename(_ folder: NoteFolder) {
         renameText = folder.name
         renamingFolder = folder
+    }
+
+    /// Open a note in its own standalone reader window (see the `note-reader`
+    /// `WindowGroup` in `LangCoachApp`). Re-opening the same note reuses its window.
+    private func openNote(_ doc: StudyDocument) {
+        openWindow(id: "note-reader", value: doc.persistentModelID)
     }
 }
