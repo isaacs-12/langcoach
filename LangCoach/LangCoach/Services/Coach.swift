@@ -314,6 +314,23 @@ final class Coach {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// A quick "cheat" translation of the prompt sentence into the target
+    /// language — used by Translate practice to peek at a suggested answer when
+    /// stuck. Uses the cheap/fast model.
+    func translationHint(
+        for sentence: String,
+        direction: TranslationDirection
+    ) async throws -> String {
+        let system = """
+        You translate a single sentence \(direction.instruction) for a learner who \
+        wants to peek at a suggested answer. Output ONLY the natural \
+        \(direction.targetLabel) translation — no quotes, labels, romanization, or \
+        extra text.
+        """
+        return try await quickComplete(system: system, user: sentence, temperature: 0.3)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Looks up a single Korean word as it appears in a sentence and returns its
     /// dictionary/root form plus a definition — context-aware, so a conjugated verb
     /// resolves to its 다-form and a noun+particle resolves to the bare noun. Uses

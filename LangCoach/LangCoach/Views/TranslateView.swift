@@ -17,6 +17,9 @@ struct TranslateView: View {
     @State private var phase: Phase = .setup
     @State private var errorText: String?
     @State private var score = ScoreTally()
+    /// The revealed "cheat" translation of the current prompt, if peeked.
+    @State private var hint: String?
+    @State private var loadingHint = false
 
     enum Phase { case setup, loadingPrompt, answering, grading, graded }
     enum Difficulty: String, CaseIterable, Identifiable {
@@ -30,6 +33,7 @@ struct TranslateView: View {
             if !coach.hasKey { APIKeyMissingBanner() }
             content
         }
+        .background(PracticeBackground())
         .navigationTitle("Translate")
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -56,51 +60,63 @@ struct TranslateView: View {
     // MARK: - Setup
 
     private var setupView: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "character.book.closed.fill")
-                .font(.system(size: 44)).foregroundStyle(Theme.brandGradient)
-            Text("Translation practice").font(.title2.bold())
-            Text("The coach gives you a sentence to translate, then grades your answer with specific feedback.")
-                .font(.callout).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).frame(maxWidth: 420)
+        ScrollView {
+            VStack(spacing: 26) {
+                SetupHero(
+                    systemImage: "character.book.closed.fill",
+                    title: "Translation practice",
+                    subtitle: "The coach gives you a sentence to translate, then grades your answer with specific feedback."
+                )
 
-            VStack(alignment: .leading, spacing: 14) {
-                Picker("Direction", selection: $direction) {
-                    ForEach(TranslationDirection.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldLabel(text: "Direction")
+                        PillPicker(items: TranslationDirection.allCases, selection: $direction) { $0.label }
+                    }
 
-                Picker("Difficulty", selection: $difficulty) {
-                    ForEach(Difficulty.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldLabel(text: "Difficulty")
+                        PillPicker(items: Difficulty.allCases, selection: $difficulty) { $0.label }
+                    }
 
-                if !documents.isEmpty {
-                    Toggle("Base sentences on one of my notes", isOn: $useNotes)
-                    if useNotes {
-                        Picker("Note", selection: $sourceDoc) {
-                            Text("Any note").tag(Optional<StudyDocument>.none)
-                            ForEach(documents) { Text($0.title).tag(Optional($0)) }
+                    if !documents.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle(isOn: $useNotes) {
+                                Label("Base sentences on my notes", systemImage: "book.closed")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .toggleStyle(.switch)
+                            .tint(Theme.accent)
+
+                            if useNotes {
+                                Picker("Note", selection: $sourceDoc) {
+                                    Text("Any note").tag(Optional<StudyDocument>.none)
+                                    ForEach(documents) { Text($0.title).tag(Optional($0)) }
+                                }
+                                .labelsHidden()
+                            }
                         }
+                        .animation(.easeInOut(duration: 0.2), value: useNotes)
                     }
                 }
-            }
-            .frame(maxWidth: 420)
+                .cardSurface()
+                .frame(maxWidth: 440)
 
-            Button { nextPrompt() } label: {
-                Text("Start").frame(maxWidth: 420)
+                Button { nextPrompt() } label: {
+                    Label("Start", systemImage: "sparkles")
+                }
+                .buttonStyle(.primary).frame(maxWidth: 440)
+                .disabled(!coach.hasKey)
             }
-            .buttonStyle(.primary).frame(maxWidth: 420)
-            .disabled(!coach.hasKey)
-            Spacer()
+            .padding(.vertical, 40)
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity).padding()
     }
 
     private func loadingView(_ message: String) -> some View {
-        VStack(spacing: 14) {
-            ProgressView()
+        VStack(spacing: 16) {
+            ProgressView().controlSize(.large)
             Text(message).font(.callout).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -113,32 +129,51 @@ struct TranslateView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
                     Label(direction.label, systemImage: "arrow.left.arrow.right")
-                        .font(.caption.weight(.medium))
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(Theme.accent)
+                        .padding(.vertical, 6).padding(.horizontal, 12)
+                        .background(Theme.accent.opacity(0.12), in: Capsule())
                     Spacer()
-                    Button("End session") { endSession() }
-                        .buttonStyle(.link)
+                    Button { endSession() } label: {
+                        Label("End session", systemImage: "xmark")
+                            .font(.caption.weight(.medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Translate this \(direction.sourceLabel.lowercased()):")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text(prompt)
-                        .font(.title3.weight(.medium))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Translate this \(direction.sourceLabel.lowercased())", systemImage: "quote.opening")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Group {
+                        if direction == .koToEn {
+                            // Korean source: double-click any word to look it up.
+                            TappableKoreanText(text: prompt, source: .translation)
+                        } else {
+                            Text(prompt).textSelection(.enabled)
+                        }
+                    }
+                    .font(.system(.title2, design: .rounded).weight(.medium))
+                    .lineSpacing(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .cardSurface()
+                .cardSurface(padding: 22)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Your \(direction.targetLabel.lowercased()) translation:")
-                        .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    FieldLabel(text: "Your \(direction.targetLabel.lowercased()) translation")
                     TextEditor(text: $answer)
                         .font(.body)
-                        .frame(minHeight: 90)
-                        .padding(8)
-                        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 96)
+                        .padding(10)
+                        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
                         .disabled(phase == .grading || phase == .graded)
+                }
+
+                if phase == .answering {
+                    hintRow
                 }
 
                 if let errorText {
@@ -146,14 +181,59 @@ struct TranslateView: View {
                 }
 
                 if phase == .graded, let feedback {
-                    FeedbackCard(feedback: feedback)
+                    FeedbackCard(feedback: feedback, direction: direction)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
                 actionRow
             }
-            .padding()
+            .padding(24)
             .frame(maxWidth: 700)
             .frame(maxWidth: .infinity)
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: phase)
+        }
+    }
+
+    /// The "peek at the answer" cheat: a subtle button that fetches and reveals a
+    /// suggested translation of the prompt when the learner is stuck.
+    @ViewBuilder
+    private var hintRow: some View {
+        if let hint {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Suggested translation", systemImage: "eye.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                Group {
+                    if direction == .enToKo {
+                        // Korean target: double-click any word to look it up.
+                        TappableKoreanText(text: hint, source: .translation)
+                    } else {
+                        Text(hint).textSelection(.enabled)
+                    }
+                }
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(12)
+            .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.accent.opacity(0.25)))
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        } else {
+            Button { peek() } label: {
+                if loadingHint {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Revealing…")
+                    }
+                } else {
+                    Label("Peek at the answer", systemImage: "eye")
+                }
+            }
+            .buttonStyle(.plain)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .disabled(loadingHint || !coach.hasKey)
+            .help("Reveal a suggested translation to help you when you're stuck")
         }
     }
 
@@ -163,16 +243,24 @@ struct TranslateView: View {
             Spacer()
             switch phase {
             case .answering:
-                Button("Check answer") { grade() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button { grade() } label: {
+                    Label("Check answer", systemImage: "checkmark.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(Theme.accent)
+                .disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
             case .grading:
                 ProgressView().controlSize(.small)
                 Text("Grading…").foregroundStyle(.secondary)
             case .graded:
-                Button("Next sentence") { nextPrompt() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+                Button { nextPrompt() } label: {
+                    Label("Next sentence", systemImage: "arrow.right.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(Theme.accent)
+                .keyboardShortcut(.defaultAction)
             default:
                 EmptyView()
             }
@@ -181,10 +269,29 @@ struct TranslateView: View {
 
     // MARK: - Actions
 
+    private func peek() {
+        guard hint == nil, !loadingHint, coach.hasKey else { return }
+        errorText = nil
+        loadingHint = true
+        Task {
+            do {
+                let suggestion = try await coach.translationHint(for: prompt, direction: direction)
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.2)) { hint = suggestion }
+                    loadingHint = false
+                }
+            } catch {
+                await MainActor.run { errorText = error.localizedDescription; loadingHint = false }
+            }
+        }
+    }
+
     private func nextPrompt() {
         errorText = nil
         feedback = nil
         answer = ""
+        hint = nil
+        loadingHint = false
         phase = .loadingPrompt
         // Prefer the compact distilled memory; fall back to raw text if not yet generated.
         let context: String?
@@ -239,6 +346,7 @@ struct TranslateView: View {
     private func endSession() {
         phase = .setup
         prompt = ""; answer = ""; feedback = nil; errorText = nil
+        hint = nil; loadingHint = false
         recentPrompts.removeAll()
     }
 }
@@ -252,6 +360,7 @@ struct ScoreTally {
 
 private struct FeedbackCard: View {
     let feedback: TranslationFeedback
+    var direction: TranslationDirection
 
     private var tint: Color {
         switch feedback.verdict.lowercased() {
@@ -274,7 +383,13 @@ private struct FeedbackCard: View {
             if !feedback.corrected.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Natural translation").font(.caption).foregroundStyle(.secondary)
-                    Text(feedback.corrected).font(.body.weight(.medium)).textSelection(.enabled)
+                    if direction == .enToKo {
+                        // Korean target: double-click any word to look it up.
+                        TappableKoreanText(text: feedback.corrected, source: .translation)
+                            .font(.body.weight(.medium))
+                    } else {
+                        Text(feedback.corrected).font(.body.weight(.medium)).textSelection(.enabled)
+                    }
                 }
             }
             if !feedback.feedback.isEmpty {

@@ -40,9 +40,9 @@ struct ConversationView: View {
             } else {
                 transcript
             }
-            Divider()
             composer
         }
+        .background(PracticeBackground())
         .navigationTitle("Conversation")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -66,52 +66,68 @@ struct ConversationView: View {
     // MARK: - Setup
 
     private var setupCard: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(Theme.brandGradient)
-            Text("Korean texting practice").font(.title2.bold())
-            Text("Text back and forth with your AI coach in Korean. It replies like a friend over messages and gently corrects your mistakes as you go.")
-                .font(.callout).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).frame(maxWidth: 420)
+        ScrollView {
+            VStack(spacing: 26) {
+                SetupHero(
+                    systemImage: "bubble.left.and.bubble.right.fill",
+                    title: "Korean texting practice",
+                    subtitle: "Text back and forth with your AI coach in Korean. It replies like a friend over messages and gently corrects your mistakes as you go."
+                )
 
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("Level", selection: $level) {
-                    ForEach(Level.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldLabel(text: "Level")
+                        PillPicker(items: Level.allCases, selection: $level) { $0.label }
+                    }
 
-                TextField("Topic or scenario (optional) — e.g. ordering coffee", text: $topic)
-                    .textFieldStyle(.roundedBorder)
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldLabel(text: "Topic")
+                        TextField("Optional — e.g. ordering coffee", text: $topic)
+                            .textFieldStyle(.plain)
+                            .padding(.vertical, 10).padding(.horizontal, 13)
+                            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
+                    }
 
-                if !documents.isEmpty {
-                    Toggle("Use vocab from my notes", isOn: $useNotes)
-                    if useNotes {
-                        Picker("Note", selection: $sourceDoc) {
-                            Text("Most recent note").tag(Optional<StudyDocument>.none)
-                            ForEach(documents) { Text($0.title).tag(Optional($0)) }
+                    if !documents.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle(isOn: $useNotes) {
+                                Label("Use vocab from my notes", systemImage: "book.closed")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .toggleStyle(.switch)
+                            .tint(Theme.accent)
+
+                            if useNotes {
+                                Picker("Note", selection: $sourceDoc) {
+                                    Text("Most recent note").tag(Optional<StudyDocument>.none)
+                                    ForEach(documents) { Text($0.title).tag(Optional($0)) }
+                                }
+                                .labelsHidden()
+                                if !activeThemes.isEmpty {
+                                    themeChips
+                                }
+                            }
                         }
-                        if !activeThemes.isEmpty {
-                            themeChips
-                        }
+                        .animation(.easeInOut(duration: 0.2), value: useNotes)
                     }
                 }
-            }
-            .frame(maxWidth: 420)
+                .cardSurface()
+                .frame(maxWidth: 440)
 
-            Button {
-                startConversation()
-            } label: {
-                Text("Start chatting").frame(maxWidth: 420)
+                Button {
+                    startConversation()
+                } label: {
+                    Label("Start chatting", systemImage: "sparkles")
+                }
+                .buttonStyle(.primary)
+                .frame(maxWidth: 440)
+                .disabled(!coach.hasKey || sending)
             }
-            .buttonStyle(.primary)
-            .frame(maxWidth: 420)
-            .disabled(!coach.hasKey || sending)
-            Spacer()
+            .padding(.vertical, 40)
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
     }
 
     // MARK: - Transcript
@@ -151,22 +167,27 @@ struct ConversationView: View {
                 TextField("한국어로 입력하세요…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
-                    .padding(10)
-                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.vertical, 10).padding(.horizontal, 15)
+                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
                     .onSubmit { send() }
                 Button {
                     send()
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 30))
-                        .foregroundStyle(canSend ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Color.secondary.opacity(0.4)))
+                        .font(.system(size: 32))
+                        .foregroundStyle(canSend ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Color.secondary.opacity(0.35)))
+                        .shadow(color: canSend ? Theme.accent.opacity(0.3) : .clear, radius: 5, y: 2)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
+                .animation(.easeOut(duration: 0.15), value: canSend)
                 .keyboardShortcut(.return, modifiers: .command)
             }
         }
-        .padding()
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
         .disabled(messages.isEmpty && !sending)
         .opacity(messages.isEmpty ? 0.5 : 1)
     }

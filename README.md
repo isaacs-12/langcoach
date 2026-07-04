@@ -142,6 +142,22 @@ signing/notarization setup).
 Issues and pull requests are welcome — especially bug reports, Korean-learning feature
 ideas, and support for more note formats or languages.
 
+## License
+
+The Lang Coach source code is licensed under the **[Apache License 2.0](LICENSE)** — you're
+free to use, modify, and redistribute it, including in commercial and closed-source projects,
+subject to the license terms (which include an explicit patent grant).
+
+A few clarifications:
+
+- **The "Lang Coach" name and app icon are not covered by the code license.** They're
+  reserved so that redistributed or forked builds don't impersonate the official app. If you
+  ship your own build from this source, please give it a different name and icon. Official,
+  signed releases are built and distributed only from this repository.
+- **Any hosted or paid service** offered by the maintainers (for example, a future
+  subscription that proxies AI requests) is a **separate product and is not part of this
+  Apache-licensed source.** The app in this repository remains free and bring-your-own-key.
+
 ---
 
-<div align="center">Made by Isaac Smith · © 2026</div>
+<div align="center">Made by Isaac Smith · © 2026 · Licensed under Apache-2.0</div>

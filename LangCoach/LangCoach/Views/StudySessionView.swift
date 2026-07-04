@@ -83,7 +83,7 @@ struct StudySetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Study \(title)").font(.headline)
+            Text("Study \(title)").font(.system(.headline, design: .rounded))
 
             Picker("Cards", selection: $filter) {
                 ForEach(StudyFilter.allCases) { f in
@@ -218,7 +218,7 @@ struct StudySessionView: View {
         let back = flipFront ? card.english : card.korean
         return VStack(spacing: 18) {
             Text(front)
-                .font(.system(size: 38, weight: .semibold))
+                .font(.system(size: 38, weight: .semibold, design: .rounded))
                 .multilineTextAlignment(.center)
 
             if flipFront && !card.reading.isEmpty && revealed {
@@ -285,7 +285,7 @@ struct StudySessionView: View {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 54))
                 .foregroundStyle(Theme.success)
-            Text("Session complete!").font(.title2.bold())
+            Text("Session complete!").font(.system(.title2, design: .rounded).weight(.bold))
             Text("You reviewed \(reviewedCount) card\(reviewedCount == 1 ? "" : "s").")
                 .foregroundStyle(.secondary)
             Button("Done") { dismiss() }

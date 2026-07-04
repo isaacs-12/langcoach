@@ -305,17 +305,16 @@ struct LibraryView: View {
             )
         } else if let doc = detailDoc {
             VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(doc.title).font(.title2.bold())
-                        Text(doc.sourceFilename).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
+                PaneHeader(systemImage: "doc.text.fill",
+                           title: doc.title,
+                           subtitle: doc.sourceFilename) {
                     Button {
                         openNote(doc)
                     } label: {
                         Label("Open", systemImage: "arrow.up.forward.square")
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .help("Open this note in its own reader window")
                     Button {
                         extracting = doc
@@ -323,6 +322,8 @@ struct LibraryView: View {
                         Label("Extract vocab", systemImage: "sparkles")
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(Theme.accent)
                 }
                 .padding()
                 Divider()
