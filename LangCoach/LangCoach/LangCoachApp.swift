@@ -7,6 +7,7 @@ struct LangCoachApp: App {
     @State private var coach: Coach
     @State private var googleAuth: GoogleAuth
     @State private var folderManager: NotesFolderManager
+    @State private var updater = UpdateChecker()
 
     init() {
         let schema = Schema([
@@ -36,12 +37,19 @@ struct LangCoachApp: App {
                 .environment(coach)
                 .environment(googleAuth)
                 .environment(folderManager)
+                .environment(updater)
                 .task { googleAuth.start(); folderManager.start() }
         }
         .modelContainer(container)
         .windowToolbarStyle(.unified)
         // Open large and only slightly wide — closer to square than the old default.
         .defaultSize(width: 1240, height: 940)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Lang Coach") { AboutPanel.show() }
+                Button("Check for Updates…") { updater.userRequestedCheck() }
+            }
+        }
 
         // A standalone reader window for a single note, opened from the Library
         // with `openWindow(id: "note-reader", value: <persistentModelID>)`. Keyed
@@ -64,5 +72,34 @@ struct LangCoachApp: App {
                 .environment(coach)
                 .environment(googleAuth)
         }
+    }
+}
+
+/// The standard macOS About panel, with a small credits blurb. Version and
+/// copyright come from the bundle (MARKETING_VERSION /
+/// NSHumanReadableCopyright build settings).
+@MainActor
+enum AboutPanel {
+    static func show() {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let credits = NSMutableAttributedString(
+            string: "A local-first Korean study companion built around your own class notes.\nMade by Isaac Smith\n",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: paragraph,
+            ]
+        )
+        credits.append(NSAttributedString(
+            string: "github.com/\(UpdateChecker.repo)",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .link: URL(string: "https://github.com/\(UpdateChecker.repo)")!,
+                .paragraphStyle: paragraph,
+            ]
+        ))
+        NSApp.activate(ignoringOtherApps: true)
+        NSApplication.shared.orderFrontStandardAboutPanel(options: [.credits: credits])
     }
 }

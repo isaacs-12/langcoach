@@ -27,10 +27,9 @@ struct ChatBubble: View {
             HStack(alignment: .top, spacing: 8) {
                 coachAvatar
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(turn.text)
+                    TappableKoreanText(text: turn.text)
                         .padding(.vertical, 9).padding(.horizontal, 13)
                         .background(.background.secondary, in: BubbleShape(isMe: false))
-                        .textSelection(.enabled)
                     if let t = turn.translation, !t.isEmpty {
                         if showTranslation || revealed {
                             Text(t)
@@ -74,9 +73,8 @@ private struct CorrectionCard: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Theme.warning)
             if !correction.corrected.isEmpty {
-                Text(correction.corrected)
+                TappableKoreanText(text: correction.corrected)
                     .font(.callout.weight(.medium))
-                    .textSelection(.enabled)
             }
             if !correction.note.isEmpty {
                 Text(correction.note)

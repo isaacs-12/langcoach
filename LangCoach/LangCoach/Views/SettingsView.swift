@@ -98,6 +98,13 @@ private struct ProviderSettingsView: View {
 }
 
 private struct AboutSettingsView: View {
+    private var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    }
+    private var build: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -105,12 +112,21 @@ private struct AboutSettingsView: View {
                 .frame(width: 72, height: 72)
                 .overlay(Text("한").font(.largeTitle.bold()).foregroundStyle(.white))
             Text("Lang Coach").font(.title2.bold())
+            Text("Version \(version) (\(build))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text("A local-first Korean study companion built around your own class notes.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
+            Link("github.com/\(UpdateChecker.repo)",
+                 destination: URL(string: "https://github.com/\(UpdateChecker.repo)")!)
+                .font(.callout)
             Spacer()
+            Text("Made by Isaac Smith · Copyright © 2026")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(30)
