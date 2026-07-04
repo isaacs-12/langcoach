@@ -252,12 +252,14 @@ struct LibraryView: View {
                     folder: folder, roots: rootFolders, selection: $selection,
                     expanded: $expandedFolders, drag: drag,
                     onRename: beginRename, onNewSubfolder: { createFolder(parent: $0) },
+                    onNewFolder: { createFolder(withSelection: $0) },
                     onDelete: { pendingDeleteFolder = $0 }
                 )
             }
 
             ForEach(rootDocuments) { doc in
-                DocumentRow(doc: doc, roots: rootFolders, selection: $selection, drag: drag)
+                DocumentRow(doc: doc, roots: rootFolders, selection: $selection,
+                            drag: drag, onNewFolder: { createFolder(withSelection: $0) })
             }
         }
     }
@@ -486,6 +488,22 @@ struct LibraryView: View {
         context.insert(folder)
         try? context.save()
         if let parent { expandedFolders.insert(parent.persistentModelID) }
+        beginRename(folder)
+    }
+
+    /// Create a folder containing `docs`, then open the rename prompt. The folder
+    /// is placed alongside the notes: under their shared parent when they all live
+    /// in the same folder, otherwise at the top level.
+    private func createFolder(withSelection docs: [StudyDocument]) {
+        guard !docs.isEmpty else { return }
+        let parents = Set(docs.map { $0.folder?.persistentModelID })
+        let parent = parents.count == 1 ? docs.first?.folder : nil
+        let folder = NoteFolder(name: "New Folder", parent: parent)
+        context.insert(folder)
+        for doc in docs { doc.folder = folder }
+        try? context.save()
+        if let parent { expandedFolders.insert(parent.persistentModelID) }
+        expandedFolders.insert(folder.persistentModelID)
         beginRename(folder)
     }
 

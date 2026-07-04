@@ -130,6 +130,8 @@ struct DocumentRow: View {
     let roots: [NoteFolder]
     @Binding var selection: Set<StudyDocument>
     @Bindable var drag: DragContext
+    /// Create a new folder containing the given notes (and rename it inline).
+    let onNewFolder: ([StudyDocument]) -> Void
     @Environment(\.modelContext) private var context
 
     /// The notes this row's actions apply to: the whole selection when this row
@@ -161,6 +163,12 @@ struct DocumentRow: View {
         }
         .contextMenu {
             let docs = affectedDocs
+            Button {
+                onNewFolder(docs)
+            } label: {
+                Label(docs.count > 1 ? "New Folder with \(docs.count) Notes" : "New Folder with Note",
+                      systemImage: "folder.badge.plus")
+            }
             MoveToMenu(items: docs.map { .document($0) }, roots: roots)
             Divider()
             Button(role: .destructive) {
@@ -187,6 +195,7 @@ struct FolderRow: View {
     @Bindable var drag: DragContext
     let onRename: (NoteFolder) -> Void
     let onNewSubfolder: (NoteFolder) -> Void
+    let onNewFolder: ([StudyDocument]) -> Void
     let onDelete: (NoteFolder) -> Void
     @Environment(\.modelContext) private var context
     @State private var targeted = false
@@ -207,11 +216,13 @@ struct FolderRow: View {
                 FolderRow(
                     folder: child, roots: roots, selection: $selection,
                     expanded: $expanded, drag: drag,
-                    onRename: onRename, onNewSubfolder: onNewSubfolder, onDelete: onDelete
+                    onRename: onRename, onNewSubfolder: onNewSubfolder,
+                    onNewFolder: onNewFolder, onDelete: onDelete
                 )
             }
             ForEach(folder.sortedDocuments) { doc in
-                DocumentRow(doc: doc, roots: roots, selection: $selection, drag: drag)
+                DocumentRow(doc: doc, roots: roots, selection: $selection,
+                            drag: drag, onNewFolder: onNewFolder)
             }
         } label: {
             label
