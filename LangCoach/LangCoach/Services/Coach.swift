@@ -314,6 +314,45 @@ final class Coach {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Looks up a single Korean word as it appears in a sentence and returns its
+    /// dictionary/root form plus a definition — context-aware, so a conjugated verb
+    /// resolves to its 다-form and a noun+particle resolves to the bare noun. Uses
+    /// the cheap/fast model.
+    func defineWord(_ word: String, in sentence: String) async throws -> WordDefinition {
+        let system = """
+        You are a Korean dictionary for an English-speaking learner. The learner \
+        tapped a single Korean word as it appears in a sentence. Explain that word's \
+        ROOT / DICTIONARY form — never the surface (inflected) form.
+
+        - Conjugated verb or adjective → the dictionary form ending in 다 \
+        (e.g. 먹었어요 → 먹다, 예뻐요 → 예쁘다).
+        - Noun with an attached particle → the bare noun, and name the particle in \
+        the note (e.g. 밥을 → 밥, note: object particle 을).
+        - Give the definition of that dictionary form's meaning in THIS context \
+        (pick the right sense for the sentence).
+
+        Respond ONLY with JSON (no markdown fences) with these keys, all required:
+        "word": the tapped surface word, cleaned of punctuation,
+        "dictionaryForm": the root / dictionary form,
+        "reading": romanization of the dictionary form (may be empty),
+        "partOfSpeech": short English part of speech (e.g. "verb", "noun", "particle", "adjective", "adverb"),
+        "meaning": a concise English definition of the root meaning that fits this context,
+        "note": one short English note on how it is used here — tense, politeness, \
+        attached particle, or nuance. Empty "" if there is nothing useful to add.
+        """
+        let user = """
+        SENTENCE: \(sentence)
+        TAPPED WORD: \(word)
+        """
+        let raw = try await quickComplete(system: system, user: user, temperature: 0.2)
+        let def = try Self.decodeDefinition(raw)
+        // A well-formed but empty object (wrong shape that still decoded) is a miss.
+        guard !def.dictionaryForm.isEmpty || !def.meaning.isEmpty else {
+            throw LLMError.badResponse("Empty definition for \(word)")
+        }
+        return def
+    }
+
     // MARK: - JSON decoding helpers
 
     static func stripFences(_ s: String) -> String {
@@ -353,6 +392,18 @@ final class Coach {
             throw LLMError.badResponse("Could not parse feedback JSON.\n\(String(raw.prefix(400)))")
         }
     }
+
+    static func decodeDefinition(_ raw: String) throws -> WordDefinition {
+        let cleaned = stripFences(raw)
+        guard let data = cleaned.data(using: .utf8) else {
+            throw LLMError.badResponse(raw)
+        }
+        do {
+            return try JSONDecoder().decode(WordDefinition.self, from: data)
+        } catch {
+            throw LLMError.badResponse("Could not parse definition JSON.\n\(String(raw.prefix(400)))")
+        }
+    }
 }
 
 // MARK: - DTOs
@@ -365,6 +416,34 @@ struct ExtractedVocab: Codable, Identifiable, Hashable {
     var example: String = ""
 
     private enum CodingKeys: String, CodingKey { case korean, english, reading, example }
+}
+
+/// A context-aware dictionary lookup for one tapped Korean word. Decoded
+/// tolerantly: any missing key falls back to "" so a partial response from the
+/// fast model still yields something showable rather than throwing.
+struct WordDefinition: Hashable {
+    var word: String
+    var dictionaryForm: String
+    var reading: String
+    var partOfSpeech: String
+    var meaning: String
+    var note: String
+}
+
+extension WordDefinition: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case word, dictionaryForm, reading, partOfSpeech, meaning, note
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func str(_ k: CodingKeys) -> String { (try? c.decode(String.self, forKey: k)) ?? "" }
+        word = str(.word)
+        dictionaryForm = str(.dictionaryForm)
+        reading = str(.reading)
+        partOfSpeech = str(.partOfSpeech)
+        meaning = str(.meaning)
+        note = str(.note)
+    }
 }
 
 enum TranslationDirection: String, CaseIterable, Identifiable {
