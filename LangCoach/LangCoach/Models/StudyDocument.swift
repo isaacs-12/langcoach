@@ -69,6 +69,39 @@ final class StudyDocument {
         return []
     }
 
+    /// The lesson's vocabulary entries (each roughly "한국어 — English meaning"),
+    /// parsed from the `VOCAB:` block of the distilled study memory. Targeted
+    /// lesson review builds translation sentences out of these so self-study
+    /// exercises exactly the words the lesson introduced. Empty without a memory.
+    var vocabEntries: [String] { memorySection("VOCAB") }
+
+    /// Returns the bulleted lines under a `NAME:` header in the study memory,
+    /// stripped of list/markdown decoration, stopping at the next section header
+    /// or blank gap. Shares the tolerant decoration handling used by `themes`.
+    private func memorySection(_ name: String) -> [String] {
+        guard hasMemory else { return [] }
+        let decoration = CharacterSet(charactersIn: " \t*#->•")
+        // The stable section headers `renderMemory` emits; used to detect where
+        // one block ends and the next begins.
+        let headers = ["KEY STRUCTURE", "VOCAB", "GRAMMAR", "THEMES"]
+        var out: [String] = []
+        var inSection = false
+        for raw in studyMemory.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: decoration)
+            if line.isEmpty {
+                if inSection { break }
+                continue
+            }
+            let upper = line.uppercased()
+            if let header = headers.first(where: { upper.hasPrefix($0) }) {
+                inSection = (header == name.uppercased())
+                continue
+            }
+            if inSection { out.append(line) }
+        }
+        return out
+    }
+
     /// A short preview of the document body for list display.
     var preview: String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

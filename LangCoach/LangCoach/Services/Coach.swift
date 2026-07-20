@@ -314,6 +314,46 @@ final class Coach {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Generates a translation sentence for TARGETED lesson review: every sentence
+    /// is built from the lesson's own vocabulary and grammar, so self-study after a
+    /// lesson exercises exactly what was taught rather than random textbook fare.
+    /// `memory` carries the lesson's distilled study memory (grammar + structure
+    /// for natural phrasing); `targetVocab` are the specific lesson entries to weave
+    /// in this round — the caller rotates through the full list for coverage.
+    /// `avoid` lists recent sentences the model should not repeat.
+    func generateVocabReviewPrompt(
+        direction: TranslationDirection,
+        difficulty: String,
+        memory: String,
+        targetVocab: [String],
+        avoid: [String] = []
+    ) async throws -> String {
+        var system = """
+        You generate single sentences for a Korean translation exercise that reviews \
+        one specific lesson. Difficulty: \(difficulty). Build every sentence out of \
+        the lesson's OWN vocabulary and grammar so the student practices exactly what \
+        they studied. Output ONLY the sentence to be translated, with no quotes, \
+        labels, romanization, or extra text. Keep each sentence fresh and distinct.
+        """
+        if direction == .enToKo {
+            system += " Output an English sentence for the student to translate into Korean."
+        } else {
+            system += " Output a Korean sentence for the student to translate into English."
+        }
+
+        var user = "LESSON — draw vocabulary and grammar from this:\n\(String(memory.prefix(4000)))"
+        if !targetVocab.isEmpty {
+            let list = targetVocab.map { "- \($0)" }.joined(separator: "\n")
+            user += "\n\nBuild THIS sentence around these lesson words (use as many as fit naturally):\n\(list)"
+        }
+        if !avoid.isEmpty {
+            let recent = avoid.suffix(8).map { "- \($0)" }.joined(separator: "\n")
+            user += "\n\nDo NOT repeat or closely resemble any of these recent sentences:\n\(recent)"
+        }
+        return try await quickComplete(system: system, user: user, temperature: 0.8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// A quick "cheat" translation of the prompt sentence into the target
     /// language — used by Translate practice to peek at a suggested answer when
     /// stuck. Uses the cheap/fast model.
