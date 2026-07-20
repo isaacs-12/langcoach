@@ -2,6 +2,11 @@ import SwiftUI
 import SwiftData
 
 struct TranslateView: View {
+    /// When set, this is a TARGETED lesson-review session locked to one note: every
+    /// sentence is built from that lesson's vocabulary and grammar instead of random
+    /// topics. Nil = the normal free-form practice.
+    var lesson: StudyDocument? = nil
+
     @Environment(Coach.self) private var coach
     @Query(sort: \StudyDocument.importedAt, order: .reverse) private var documents: [StudyDocument]
 
@@ -12,6 +17,9 @@ struct TranslateView: View {
 
     @State private var prompt: String = ""
     @State private var recentPrompts: [String] = []
+    /// A shuffled queue of the lesson's vocab entries, drained a few per prompt so
+    /// review sentences rotate through the whole list. Refilled when emptied.
+    @State private var vocabQueue: [String] = []
     @State private var answer: String = ""
     @State private var feedback: TranslationFeedback?
     @State private var phase: Phase = .setup
@@ -62,11 +70,19 @@ struct TranslateView: View {
     private var setupView: some View {
         ScrollView {
             VStack(spacing: 26) {
-                SetupHero(
-                    systemImage: "character.book.closed.fill",
-                    title: "Translation practice",
-                    subtitle: "The coach gives you a sentence to translate, then grades your answer with specific feedback."
-                )
+                if let lesson {
+                    SetupHero(
+                        systemImage: "character.book.closed.fill",
+                        title: "Review by translating",
+                        subtitle: "Every sentence is built from the vocabulary and grammar in “\(lesson.title)” so you drill exactly what the lesson covered."
+                    )
+                } else {
+                    SetupHero(
+                        systemImage: "character.book.closed.fill",
+                        title: "Translation practice",
+                        subtitle: "The coach gives you a sentence to translate, then grades your answer with specific feedback."
+                    )
+                }
 
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -79,7 +95,14 @@ struct TranslateView: View {
                         PillPicker(items: Difficulty.allCases, selection: $difficulty) { $0.label }
                     }
 
-                    if !documents.isEmpty {
+                    if let lesson {
+                        LessonLockBanner(
+                            title: lesson.title,
+                            detail: lesson.vocabEntries.isEmpty
+                                ? "Sentences will draw on this lesson's content."
+                                : "Sentences will rotate through this lesson's \(lesson.vocabEntries.count) vocabulary words."
+                        )
+                    } else if !documents.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Toggle(isOn: $useNotes) {
                                 Label("Base sentences on my notes", systemImage: "book.closed")
@@ -300,14 +323,28 @@ struct TranslateView: View {
         } else {
             context = nil
         }
+        // Draining the vocab queue mutates state, so do it here on the main actor
+        // (before the background Task) rather than inside the request closure.
+        let targetVocab = lesson != nil ? nextTargetVocab() : []
         Task {
             do {
-                let sentence = try await coach.generateTranslationPrompt(
-                    direction: direction,
-                    difficulty: difficulty.rawValue,
-                    context: context,
-                    avoid: recentPrompts
-                )
+                let sentence: String
+                if let lesson {
+                    sentence = try await coach.generateVocabReviewPrompt(
+                        direction: direction,
+                        difficulty: difficulty.rawValue,
+                        memory: lesson.hasMemory ? lesson.studyMemory : lesson.text,
+                        targetVocab: targetVocab,
+                        avoid: recentPrompts
+                    )
+                } else {
+                    sentence = try await coach.generateTranslationPrompt(
+                        direction: direction,
+                        difficulty: difficulty.rawValue,
+                        context: context,
+                        avoid: recentPrompts
+                    )
+                }
                 await MainActor.run {
                     prompt = sentence
                     recentPrompts.append(sentence)
@@ -320,6 +357,18 @@ struct TranslateView: View {
                 await MainActor.run { errorText = error.localizedDescription; phase = .setup }
             }
         }
+    }
+
+    /// Pulls the next few lesson vocab entries to build a sentence around, refilling
+    /// and reshuffling the queue once exhausted so review keeps cycling the whole
+    /// list without a visible tracker.
+    private func nextTargetVocab(_ count: Int = 3) -> [String] {
+        guard let lesson, !lesson.vocabEntries.isEmpty else { return [] }
+        if vocabQueue.isEmpty { vocabQueue = lesson.vocabEntries.shuffled() }
+        let n = min(count, vocabQueue.count)
+        let picked = Array(vocabQueue.prefix(n))
+        vocabQueue.removeFirst(n)
+        return picked
     }
 
     private func grade() {
@@ -348,6 +397,29 @@ struct TranslateView: View {
         prompt = ""; answer = ""; feedback = nil; errorText = nil
         hint = nil; loadingHint = false
         recentPrompts.removeAll()
+        vocabQueue.removeAll()
+    }
+}
+
+/// A read-only banner shown in place of the note picker during a targeted lesson
+/// review, making it clear which lesson the sentences are locked to.
+private struct LessonLockBanner: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "graduationcap.fill")
+                .foregroundStyle(Theme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 

@@ -2,6 +2,11 @@ import SwiftUI
 import SwiftData
 
 struct ConversationView: View {
+    /// When set, this is a TARGETED lesson-review session locked to one note: the
+    /// note picker/toggle is replaced by a fixed banner and the coach is steered to
+    /// drill the lesson's grammar structures. Nil = the normal free-form practice.
+    var lesson: StudyDocument? = nil
+
     @Environment(Coach.self) private var coach
     @Query(sort: \StudyDocument.importedAt, order: .reverse) private var documents: [StudyDocument]
 
@@ -68,11 +73,19 @@ struct ConversationView: View {
     private var setupCard: some View {
         ScrollView {
             VStack(spacing: 26) {
-                SetupHero(
-                    systemImage: "bubble.left.and.bubble.right.fill",
-                    title: "Korean texting practice",
-                    subtitle: "Text back and forth with your AI coach in Korean. It replies like a friend over messages and gently corrects your mistakes as you go."
-                )
+                if let lesson {
+                    SetupHero(
+                        systemImage: "bubble.left.and.bubble.right.fill",
+                        title: "Review by texting",
+                        subtitle: "Chat in Korean with your coach, who keeps steering the conversation so you reuse the grammar and vocabulary from “\(lesson.title).”"
+                    )
+                } else {
+                    SetupHero(
+                        systemImage: "bubble.left.and.bubble.right.fill",
+                        title: "Korean texting practice",
+                        subtitle: "Text back and forth with your AI coach in Korean. It replies like a friend over messages and gently corrects your mistakes as you go."
+                    )
+                }
 
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -89,7 +102,13 @@ struct ConversationView: View {
                             .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
                     }
 
-                    if !documents.isEmpty {
+                    if lesson != nil {
+                        // Locked to one lesson: no note picker, just the theme
+                        // suggestions so the student can steer within the lesson.
+                        if !activeThemes.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) { themeChips }
+                        }
+                    } else if !documents.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Toggle(isOn: $useNotes) {
                                 Label("Use vocab from my notes", systemImage: "book.closed")
@@ -224,16 +243,35 @@ struct ConversationView: View {
             p += "\n\nToday's topic/scenario: \(topic)."
         }
         if let context = notesContext() {
-            p += """
+            if lesson != nil {
+                // Targeted review: drill the lesson's grammar hard. Topics can roam,
+                // but the grammar structures should recur across most replies.
+                p += """
 
 
-            The student is studying the lesson below. Naturally weave this vocabulary \
-            and these grammar points into the conversation so they get to practice them, \
-            without forcing it. Do not mention that you were given notes.
+                The student just studied the lesson below and is REVIEWING it to \
+                cement it. In the MAJORITY of your messages, use the lesson's grammar \
+                structures (see KEY STRUCTURE and GRAMMAR) and steer the chat so the \
+                student naturally has to use them back — ask questions that invite \
+                those patterns. Favor the lesson's vocabulary. You may range beyond \
+                the exact lesson topics, but keep the grammar focus throughout. Do \
+                not mention that you were given notes.
 
-            LESSON NOTES:
-            \(context)
-            """
+                LESSON:
+                \(context)
+                """
+            } else {
+                p += """
+
+
+                The student is studying the lesson below. Naturally weave this vocabulary \
+                and these grammar points into the conversation so they get to practice them, \
+                without forcing it. Do not mention that you were given notes.
+
+                LESSON NOTES:
+                \(context)
+                """
+            }
         }
         return p
     }
@@ -241,6 +279,7 @@ struct ConversationView: View {
     /// Themes of the note currently feeding the chat — the tappable topic
     /// suggestions. Empty until the note has a distilled memory with a THEMES line.
     private var activeThemes: [String] {
+        if let lesson { return lesson.themes }
         guard useNotes, let doc = sourceDoc ?? documents.first else { return [] }
         return doc.themes
     }
@@ -277,9 +316,14 @@ struct ConversationView: View {
         topic = (pool.isEmpty ? activeThemes : pool).randomElement() ?? topic
     }
 
-    /// The distilled study memory to steer the chat, if the user opted in.
+    /// The distilled study memory to steer the chat: the locked review lesson when
+    /// present, otherwise whichever note the user opted into (if any).
     private func notesContext() -> String? {
-        guard useNotes, let doc = sourceDoc ?? documents.first else { return nil }
+        let doc: StudyDocument?
+        if let lesson { doc = lesson }
+        else if useNotes { doc = sourceDoc ?? documents.first }
+        else { doc = nil }
+        guard let doc else { return nil }
         let memory = doc.studyMemory.trimmingCharacters(in: .whitespacesAndNewlines)
         if !memory.isEmpty { return memory }
         // Fall back to a trimmed slice of raw text if no memory has been distilled yet.

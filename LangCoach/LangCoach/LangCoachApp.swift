@@ -67,6 +67,19 @@ struct LangCoachApp: App {
         // Portrait, page-like proportions rather than a wide slab.
         .defaultSize(width: 700, height: 880)
 
+        // A focused review window for one lesson, opened from the Library with
+        // `openWindow(id: "lesson-review", value: <persistentModelID>)`. Keyed on
+        // the lesson's identifier so re-opening the same lesson reuses its window.
+        WindowGroup(id: "lesson-review", for: PersistentIdentifier.self) { $documentID in
+            if let documentID {
+                TargetedReviewView(documentID: documentID)
+                    .environment(coach)
+            }
+        }
+        .modelContainer(container)
+        .windowToolbarStyle(.unified)
+        .defaultSize(width: 860, height: 760)
+
         Settings {
             SettingsView()
                 .environment(coach)

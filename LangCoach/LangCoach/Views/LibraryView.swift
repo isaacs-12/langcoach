@@ -317,6 +317,14 @@ struct LibraryView: View {
                     .controlSize(.large)
                     .help("Open this note in its own reader window")
                     Button {
+                        openWindow(id: "lesson-review", value: doc.persistentModelID)
+                    } label: {
+                        Label("Review lesson", systemImage: "graduationcap")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .help("Practice conversation and translation focused on this lesson")
+                    Button {
                         extracting = doc
                     } label: {
                         Label("Extract vocab", systemImage: "sparkles")
